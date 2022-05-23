@@ -15,6 +15,24 @@ struct BatchBackend {};
 
 struct RenderBackend {};
 
+struct BakerBackend {};
+
+template <typename BakerType>
+void destroyBaker(BakerBackend *ptr)
+{
+    auto *backend_ptr = static_cast<BakerType *>(ptr);
+    delete backend_ptr;
+}
+
+template <typename BakerType>
+BakerImpl makeBakerImpl(BakerBackend *ptr)
+{
+    return BakerImpl(destroyBaker<BakerType>,
+                     static_cast<BakerImpl::InitType>(&BakerType::init),
+                     static_cast<BakerImpl::BakeType>(&BakerType::bake),
+                     ptr);
+}
+
 template <typename LoaderType>
 void destroyLoader(LoaderBackend *ptr)
 {
@@ -59,6 +77,8 @@ template <typename RendererType>
 RendererImpl makeRendererImpl(RenderBackend *ptr)
 {
     return RendererImpl(destroyRenderer<RendererType>,
+        static_cast<RendererImpl::MakeBakerType>(
+            &RendererType::makeBaker),
         static_cast<RendererImpl::MakeLoaderType>(
             &RendererType::makeLoader),
         static_cast<RendererImpl::MakeEnvironmentType>(
@@ -69,10 +89,14 @@ RendererImpl makeRendererImpl(RenderBackend *ptr)
             &RendererType::makeRenderBatch),
         static_cast<RendererImpl::RenderType>(
             &RendererType::render),
+        static_cast<RendererImpl::BakeType>(
+            &RendererType::bake),
         static_cast<RendererImpl::WaitType>(
             &RendererType::waitForBatch),
         static_cast<RendererImpl::GetOutputType>(
             &RendererType::getOutputPointer),
+        static_cast<RendererImpl::GetBakeOutputPointer>(
+            &RendererType::getBakeOutputPointer),
         static_cast<RendererImpl::GetAuxType>(
             &RendererType::getAuxiliaryOutputs),
         ptr);

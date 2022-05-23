@@ -237,5 +237,31 @@ private:
     uint32_t max_texture_resolution_;
 };
 
+// For now the baker only bakes one environment
+class VulkanBaker : public BakerBackend {
+public:
+    VulkanBaker(
+        const DeviceState &dev,
+        MemoryAllocator &alloc,
+        const QueueState &transfer_queue,
+        const QueueState &render_queue,
+        VkPipeline bake_pipeline,
+        VkPipelineLayout bake_pipeline_layout);
+
+    void init();
+    void bake(RenderBatch &batch);
+
+private:
+    const DeviceState &dev_;
+    MemoryAllocator &alloc_;
+    const QueueState &transfer_queue_;
+    const QueueState &render_queue_;
+    VkPipeline bake_pipeline_;
+    VkPipelineLayout bake_pipeline_layout_;
+
+    // Current output
+    half *output_;
+};
+
 }
 }

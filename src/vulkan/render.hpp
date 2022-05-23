@@ -94,6 +94,12 @@ struct FramebufferState {
     int adaptiveIdx;
 };
 
+struct LightBakingState {
+    ShaderPipeline baker;
+    // For now just test with one output
+    LocalBuffer output;
+};
+
 struct RenderState {
     VkSampler repeatSampler;
     VkSampler clampSampler;
@@ -101,6 +107,7 @@ struct RenderState {
     ShaderPipeline rt;
     ShaderPipeline exposure;
     ShaderPipeline tonemap;
+    ShaderPipeline bake;
 };
 
 struct PipelineState {
@@ -115,6 +122,7 @@ struct RenderPipelines {
     PipelineState rt;
     PipelineState exposure;
     PipelineState tonemap;
+    PipelineState bake;
 };
 
 struct PerBatchState {
@@ -187,17 +195,25 @@ public:
     EnvironmentImpl makeEnvironment(const std::shared_ptr<Scene> &scene,
                                     const Camera &cam);
 
+    BakerImpl makeBaker();
+
     void setActiveEnvironmentMaps(
         std::shared_ptr<EnvironmentMapGroup> env_maps);
 
     RenderBatch::Handle makeRenderBatch();
 
     void render(RenderBatch &batch);
+    
+    // Expects a batch of size 1
+    void bake(RenderBatch &batch);
 
     void waitForBatch(RenderBatch &batch);
 
     half *getOutputPointer(RenderBatch &batch);
+    half *getBakeOutputPointer();
     AuxiliaryOutputs getAuxiliaryOutputs(RenderBatch &batch);
+
+    void makeBakeOutput();
 
 private:
     VulkanBackend(const RenderConfig &cfg,
@@ -232,6 +248,9 @@ private:
 
     std::optional<PresentationState> present_;
     std::optional<Denoiser> denoiser_;
+
+    // For now just replicate rendering
+    VulkanBatch *bake_output_;
 };
 
 }

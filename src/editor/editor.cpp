@@ -916,7 +916,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    Editor editor(0, 3840, 2160);
+    Editor editor(0, 1920, 1080);
     editor.loadScene(argv[1]);
 
     editor.loop();

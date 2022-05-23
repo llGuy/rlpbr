@@ -49,6 +49,16 @@ EnvironmentImpl & EnvironmentImpl::operator=(EnvironmentImpl &&o)
     return *this;
 }
 
+BakerImpl::BakerImpl(DestroyType destroy_ptr, InitType init_ptr,
+                     BakeType bake_ptr, BakerBackend *state)
+    : destroy_ptr_(destroy_ptr),
+      init_ptr_(init_ptr),
+      bake_ptr_(bake_ptr),
+      state_(state)
+{
+    
+}
+
 LoaderImpl::LoaderImpl(DestroyType destroy_ptr,
                        LoadSceneType load_scene_ptr,
                        LoadEnvMapsType load_env_maps_ptr,
@@ -91,23 +101,29 @@ LoaderImpl & LoaderImpl::operator=(LoaderImpl &&o)
 }
 
 RendererImpl::RendererImpl(DestroyType destroy_ptr,
+                           MakeBakerType make_baker_ptr,
                            MakeLoaderType make_loader_ptr,
                            MakeEnvironmentType make_env_ptr,
                            SetEnvMapsType set_env_maps_ptr,
                            MakeBatchType make_batch_ptr,
                            RenderType render_ptr,
+                           BakeType bake_ptr,
                            WaitType wait_ptr,
                            GetOutputType get_output_ptr,
+                           GetBakeOutputPointer get_bake_output_ptr,
                            GetAuxType get_aux_ptr,
                            RenderBackend *state)
     : destroy_ptr_(destroy_ptr),
+      make_baker_ptr_(make_baker_ptr),
       make_loader_ptr_(make_loader_ptr),
       make_env_ptr_(make_env_ptr),
       set_env_maps_ptr_(set_env_maps_ptr),
       make_batch_ptr_(make_batch_ptr),
       render_ptr_(render_ptr),
+      bake_ptr_(bake_ptr),
       wait_ptr_(wait_ptr),
       get_output_ptr_(get_output_ptr),
+      get_bake_output_ptr_(get_bake_output_ptr),
       get_aux_ptr_(get_aux_ptr),
       state_(state)
 {}
@@ -118,8 +134,10 @@ RendererImpl::RendererImpl(RendererImpl &&o)
       make_env_ptr_(o.make_env_ptr_),
       set_env_maps_ptr_(o.set_env_maps_ptr_),
       render_ptr_(o.render_ptr_),
+      bake_ptr_(o.bake_ptr_),
       wait_ptr_(o.wait_ptr_),
       get_output_ptr_(o.get_output_ptr_),
+      get_bake_output_ptr_(o.get_bake_output_ptr_),
       get_aux_ptr_(o.get_aux_ptr_),
       state_(o.state_)
 {

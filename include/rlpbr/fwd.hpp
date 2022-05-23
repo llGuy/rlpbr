@@ -11,6 +11,7 @@ struct LoaderBackend;
 struct RenderBackend;
 struct BatchDeleter;
 struct BatchBackend;
+struct BakerBackend;
 class RenderBatch;
 class Environment;
 class AssetLoader;

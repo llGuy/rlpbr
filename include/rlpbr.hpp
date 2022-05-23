@@ -58,10 +58,12 @@ public:
     RenderBatch makeRenderBatch();
 
     void render(RenderBatch &batch);
+    void bake(RenderBatch &batch);
 
     void waitForBatch(RenderBatch &batch);
 
     half *getOutputPointer(RenderBatch &batch) const;
+    half *getBakeOutputPointer();
 
     AuxiliaryOutputs getAuxiliaryOutputs(RenderBatch &batch) const;
 

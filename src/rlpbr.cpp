@@ -159,6 +159,11 @@ void Renderer::render(RenderBatch &batch)
     backend_.render(batch);
 }
 
+void Renderer::bake(RenderBatch &batch)
+{
+    backend_.bake(batch);
+}
+
 void Renderer::waitForBatch(RenderBatch &batch)
 {
     backend_.waitForBatch(batch);
@@ -167,6 +172,11 @@ void Renderer::waitForBatch(RenderBatch &batch)
 half *Renderer::getOutputPointer(RenderBatch &batch) const
 {
     return backend_.getOutputPointer(batch);
+}
+
+half *Renderer::getBakeOutputPointer()
+{
+    return backend_.getBakeOutputPointer();
 }
 
 AuxiliaryOutputs Renderer::getAuxiliaryOutputs(RenderBatch &batch) const
@@ -317,6 +327,11 @@ EnvironmentImpl RendererImpl::makeEnvironment(
     return invoke(make_env_ptr_, state_, scene, cam);
 }
 
+BakerImpl RendererImpl::makeBaker()
+{
+    return invoke(make_baker_ptr_, state_);
+}
+
 void RendererImpl::setActiveEnvironmentMaps(
     shared_ptr<EnvironmentMapGroup> env_maps)
 {
@@ -333,6 +348,11 @@ void RendererImpl::render(RenderBatch &batch)
     return invoke(render_ptr_, state_, batch);
 }
 
+void RendererImpl::bake(RenderBatch &batch)
+{
+    return invoke(bake_ptr_, state_, batch);
+}
+
 void RendererImpl::waitForBatch(RenderBatch &batch)
 {
     invoke(wait_ptr_, state_, batch);
@@ -341,6 +361,11 @@ void RendererImpl::waitForBatch(RenderBatch &batch)
 half *RendererImpl::getOutputPointer(RenderBatch &batch) const
 {
     return invoke(get_output_ptr_, state_, batch);
+}
+
+half *RendererImpl::getBakeOutputPointer()
+{
+    return invoke(get_bake_output_ptr_, state_);
 }
 
 AuxiliaryOutputs RendererImpl::getAuxiliaryOutputs(RenderBatch &batch) const

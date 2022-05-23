@@ -5,6 +5,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/string_cast.hpp>
 #include <chrono>
+#include <array>
 
 #include <GL/glew.h>
 #define GLFW_INCLUDE_NONE
@@ -216,8 +217,10 @@ int main(int argc, char *argv[]) {
 
     glEnable(GL_FRAMEBUFFER_SRGB);
 
-    renderer.render(batch);
-    renderer.waitForBatch(batch);
+    renderer.bake(batch);
+
+    // renderer.render(batch);
+    // renderer.waitForBatch(batch);
 
     auto time_prev = chrono::steady_clock::now();
     uint32_t frame_idx = 0;
@@ -268,10 +271,12 @@ int main(int argc, char *argv[]) {
                  << "U: " << glm::to_string(cam.up) << "\n";
         }
 
-        renderer.render(batch);
-        renderer.waitForBatch(batch);
+        // renderer.render(batch);
+        // renderer.waitForBatch(batch);
 
-        half *output = renderer.getOutputPointer(batch);
+        // half *output = renderer.getOutputPointer(batch);
+        half *output = renderer.getBakeOutputPointer();
+
 
         glNamedFramebufferTexture(read_fbos[frame_idx], GL_COLOR_ATTACHMENT0,
                                   0, 0);

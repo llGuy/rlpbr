@@ -241,6 +241,33 @@ VulkanLoader::VulkanLoader(const DeviceState &d,
       max_texture_resolution_(max_texture_resolution)
 {}
 
+VulkanBaker::VulkanBaker(
+    const DeviceState &dev,
+    MemoryAllocator &alloc,
+    const QueueState &transfer_queue,
+    const QueueState &render_queue,
+    VkPipeline bake_pipeline,
+    VkPipelineLayout bake_pipeline_layout)
+    : dev_(dev),
+      alloc_(alloc),
+      transfer_queue_(transfer_queue),
+      render_queue_(render_queue),
+      bake_pipeline_(bake_pipeline),
+      bake_pipeline_layout_(bake_pipeline_layout)
+{
+}
+
+void VulkanBaker::init()
+{
+    
+}
+
+// This takes a render batch but expects the batch to only contain one environment
+void VulkanBaker::bake(RenderBatch &batch)
+{
+    
+}
+
 TextureData::TextureData(const DeviceState &d, MemoryAllocator &a)
     : dev(d),
       alloc(a),
