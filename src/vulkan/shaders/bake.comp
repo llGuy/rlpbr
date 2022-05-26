@@ -278,8 +278,7 @@ vec3 getPrevNormal(uint32_t base_offset)
 
 void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id)
 {
-    // outputBuffer[nonuniformEXT(base_offset)] = rgb.x;
-    outputBuffer[nonuniformEXT(base_offset)] = 0.0;
+    outputBuffer[nonuniformEXT(base_offset)] = rgb.x;
     outputBuffer[nonuniformEXT(base_offset + 1)] = rgb.y;
     outputBuffer[nonuniformEXT(base_offset + 2)] = rgb.z;
     outputBuffer[nonuniformEXT(base_offset + 3)] =
@@ -727,36 +726,26 @@ layout (local_size_x = LOCAL_WORKGROUP_X,
         local_size_y = LOCAL_WORKGROUP_Y,
         local_size_z = LOCAL_WORKGROUP_Z) in;
 #endif
+
+
 void main()
 {
-#ifdef ADAPTIVE_SAMPLING
-    uint32_t input_tile_idx = gl_GlobalInvocationID.x;
-
-    u32vec2 input_tile_offset = gl_LocalInvocationID.yz;
-
-    InputTile input_tile = inputTiles[input_tile_idx];
-
-    u32vec3 idx = u32vec3(
-        input_tile.xOffset * LOCAL_WORKGROUP_X + input_tile_offset.x,
-        input_tile.yOffset * LOCAL_WORKGROUP_Y + input_tile_offset.y,
-        input_tile.batchIdx);
-
-    uint32_t tile_sample_offset = input_tile.sampleOffset;
-#else
-
     u32vec3 idx = gl_GlobalInvocationID.xyz;
 
     // Lookup our location within the launch grid
-#endif
     uint32_t batch_idx = idx.z;
 
     bool oob = idx.x >= RES_X || idx.y >= RES_Y;
     idx.x = min(idx.x, RES_X - 1);
     idx.y = min(idx.y, RES_Y - 1);
 
+    vec2 coordsGL = vec2(float(idx.x) / float(RES_X), float(idx.y) / float(RES_Y));
+    vec3 oct = octSphereMap(coordsGL);
+
     uint32_t linear_idx = batch_idx * RES_Y * RES_X + idx.y * RES_X + idx.x;
     uint32_t base_out_offset = 4 * linear_idx;
 
+    // This is going to be on
 #ifdef AUXILIARY_OUTPUTS
     uint32_t base_aux_offset = 3 * linear_idx;
 #endif
@@ -769,28 +758,17 @@ void main()
     float pixel_illuminance = 0;
     uint32_t instance_id = 0xFFFF;
 
+    // This is going to be on
 #ifdef AUXILIARY_OUTPUTS
     vec3 aux_normal = vec3(0);
     vec3 aux_albedo = vec3(0);
 #endif
 
-#ifdef ADAPTIVE_SAMPLING
-    const float sample_div = 1.f / float(ADAPTIVE_SAMPLES_PER_THREAD);
-#else
     const float sample_div = 1.f / float(SPP);
-#endif
 
-#ifdef ADAPTIVE_SAMPLING
+    #if 0
     [[dont_unroll]]
-    for (int32_t loop_sample_idx = 0; loop_sample_idx < ADAPTIVE_SAMPLES_PER_THREAD;
-         loop_sample_idx++) {
-        int32_t sample_idx = int32_t(tile_sample_offset) + loop_sample_idx;
-#else
-#ifndef ONE_SAMPLE
-    [[dont_unroll]]
-#endif
     for (int32_t sample_idx = 0; sample_idx < SPP; sample_idx++) {
-#endif
         Sampler rng = makeSampler(idx.x, idx.y, sample_idx,
             push_const.baseFrameCounter + batch_idx);
 
@@ -805,8 +783,8 @@ void main()
             PrimaryResult primary_result =
                 directLighting(idx, linear_idx, cam, prev_cam, env, rng);
 
-            pixel_avg += primary_result.vertState.radiance * sample_div;
-            pixel_illuminance += primary_result.illuminance * sample_div;
+            // pixel_avg += primary_result.vertState.radiance * sample_div;
+            // pixel_illuminance += primary_result.illuminance * sample_div;
 
             ray_diff = primary_result.rayDifferential;
             primary_normal = primary_result.hitNormal;
@@ -817,7 +795,6 @@ void main()
             bounce_flags = primary_result.vertState.bounceFlags;
             instance_id = primary_result.instanceID;
 
-#ifdef AUXILIARY_OUTPUTS
             vec3 view_normal = vec3(
                 dot(normalize(cam.right), primary_result.hitNormal),
                 dot(normalize(cam.up) * -1.f, primary_result.hitNormal),
@@ -829,7 +806,6 @@ void main()
     
             aux_normal += view_normal * sample_div;
             aux_albedo += primary_result.auxAlbedo * sample_div;
-#endif
         }
 
         if (secondary_weight.x == 0.f &&
@@ -856,130 +832,32 @@ void main()
             rgbToLuminance(indirect_contrib) * indirect_illuminance_weight;
         pixel_illuminance += 0.18f * indirect_illuminance * sample_div;
     }
+    #endif
 
-    // Proper illuminance
-#ifdef TONEMAP
-    float workgroup_illuminance =
-        avgWorkgroupIlluminance(rgbToLuminance(pixel_avg), oob);
-#endif
+    RayDifferential diff;
+    diff.dOdX = vec3(0.0);
+    diff.dOdY = vec3(0.0);
+    diff.dDdX = vec3(0.0);
+    diff.dDdY = vec3(0.0);
 
-#ifdef ADAPTIVE_SAMPLING
-    uint32_t x_tile_idx = input_tile.xOffset;
-    uint32_t y_tile_idx = input_tile.yOffset;
 
-    uint32_t out_tile_idx = idx.z * NUM_WORKGROUPS_Y * NUM_WORKGROUPS_X +
-        y_tile_idx * NUM_WORKGROUPS_X + x_tile_idx;
+    vec3 indirect = vec3(0.0);
+    float div = 1.0 / 100.0;
+    for (int32_t sample_idx = 0; sample_idx < 100; sample_idx++) {
+        Sampler rng = makeSampler(idx.x, idx.y, sample_idx, batch_idx + push_const.baseFrameCounter);
 
-    barrier();
-
-    if (gl_SubgroupID == 0 && subgroupElect()) {
-        adaptiveTileSpinlock(out_tile_idx);
-
-        workgroupScratch[0] = 0.0;
-        workgroupScratch[1] = 0.0;
-        workgroupCount = 0;
+        indirect += indirectLighting(env, cam.origin, oct, 1.0, BSDFFlagsDiffuse, diff, rng) * div;
     }
-
-    barrier();
-    memoryBarrierShared();
-
-    uint32_t subgroup_count = subgroupAdd(oob ? 0 : 1);
-
-    if (subgroupElect()) {
-        atomicAdd(workgroupCount, subgroup_count);
-    }
-
-    barrier();
-    memoryBarrierShared();
-
-    uint32_t old_tile_count = adaptiveTiles[out_tile_idx].numSamples; 
-    uint32_t cur_tile_count = workgroupCount;
-    uint32_t new_tile_count = old_tile_count + cur_tile_count;
-    uint32_t per_pixel_count = new_tile_count / workgroupCount;
-
-    vec3 old_output = getPrevOutput(base_out_offset);
-    pixel_avg = updateRunningMean(old_output, pixel_avg, per_pixel_count);
-
-    vec3 output_update_delta = abs(pixel_avg - old_output);
-
-    float pixel_scalar = (output_update_delta.x + output_update_delta.y +
-                          output_update_delta.z) / 3.0;
-    pixel_scalar = oob ? 0.0 : pixel_scalar;
-
-    float subgroup_sum = subgroupAdd(pixel_scalar);
-    float subgroup_sum_sqs = subgroupAdd(pixel_scalar * pixel_scalar);
-
-    if (subgroupElect()) {
-        atomicAdd(workgroupScratch[0], subgroup_sum);
-        atomicAdd(workgroupScratch[1], subgroup_sum_sqs);
-    }
-
-    barrier();
-    groupMemoryBarrier();
-
-    if (gl_SubgroupID == 0 && subgroupElect()) {
-        float workgroup_sum = workgroupScratch[0];
-        float workgroup_sum_sqs = workgroupScratch[1];
-
-        float workgroup_count = float(cur_tile_count);
-
-        float workgroup_m2 = workgroup_sum_sqs -
-            (workgroup_sum * workgroup_sum) / workgroup_count;
-
-        float workgroup_mean = workgroup_sum / workgroup_count;
-
-        float old_tile_mean = adaptiveTiles[out_tile_idx].tileMean; 
-
-        float delta = workgroup_mean - old_tile_mean;
-        float new_mean = old_tile_mean +
-            delta * (workgroup_count / float(new_tile_count));
-
-        float old_tile_m2 = adaptiveTiles[out_tile_idx].tileVarianceM2;
-        float new_m2 = old_tile_m2 + workgroup_m2 + delta * delta * (
-            float(old_tile_count) * workgroup_count / float(new_tile_count));
-
-        adaptiveTiles[out_tile_idx].tileMean = new_mean;
-        adaptiveTiles[out_tile_idx].tileVarianceM2 = new_m2;
-    }
-
-#ifdef AUXILIARY_OUTPUTS
-    vec3 old_albedo = getPrevAlbedo(base_aux_offset);
-    aux_albedo = updateRunningMean(old_albedo, aux_albedo, per_pixel_count);
-
-    vec3 old_normal = getPrevNormal(base_aux_offset);
-    aux_normal = updateRunningMean(old_normal, aux_normal, per_pixel_count);
-#endif
-    
-#ifdef TONEMAP
-    float old_exposure_illum = getPrevExposureIlluminance(idx);
-    workgroup_illuminance = updateRunningMean(old_exposure_illum,
-                                              workgroup_illuminance,
-                                              per_pixel_count);
-#endif
-
-#endif
 
     if (!oob) {
         //setOutput(base_out_offset, pixel_avg == vec3(0.f) ? vec3(0.f) : 0.18 * pixel_avg / vec3(pixel_illuminance), instance_id);
-        setOutput(base_out_offset, pixel_avg, instance_id);
+        // setOutput(base_out_offset, pixel_avg, instance_id);
+        setOutput(base_out_offset, indirect, instance_id);
 
 #ifdef AUXILIARY_OUTPUTS
         setAuxiliaries(base_aux_offset, aux_albedo, aux_normal);
 #endif
     }
 
-#ifdef TONEMAP
-    setExposureIlluminance(idx, workgroup_illuminance);
-#endif
-
-#ifdef ADAPTIVE_SAMPLING
-    barrier();
-
-    if (gl_SubgroupID == 0 && subgroupElect()) {
-        adaptiveTiles[out_tile_idx].numSamples = new_tile_count;
-        adaptiveTileUnlock(out_tile_idx);
-    }
-
-    memoryBarrier();
-#endif
+    // setOutput(base_out_offset, vec3(1.0, 0.0, 0.0), instance_id);
 }

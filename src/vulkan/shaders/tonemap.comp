@@ -359,9 +359,11 @@ void main()
     uint32_t instance_id;
     vec3 untonemapped = getInput(input_idx, instance_id);
 
+/*
     vec3 exposed = untonemapped * exposure;
 
     vec3 tonemapped = eaTonemap(exposed);
+    */
 
-    setOutput(output_idx, tonemapped, instance_id);
+    setOutput(output_idx, untonemapped, instance_id);
 }

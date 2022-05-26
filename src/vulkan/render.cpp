@@ -164,7 +164,7 @@ static RenderState makeRenderState(const DeviceState &dev,
 #endif
 
         if (spp < VulkanConfig::adaptive_samples_per_thread) {
-            cerr << "SPP per launch too low for adaptive sampling" << endl;
+            cerr << "SPP per launch too low for adaptive sampling - " << VulkanConfig::adaptive_samples_per_thread << endl;
             fatalExit();
         }
     }
@@ -2036,7 +2036,19 @@ void VulkanBackend::bake(RenderBatch &batch)
 
         PackedEnv &packed_env = batch_state.envPtr[batch_idx];
 
-        packed_env.cam = packCamera(env.getCamera());
+        Camera new_cam = env.getCamera();
+        new_cam.view = glm::normalize(glm::vec3(1.0f, -0.2f, 1.0f));
+        new_cam.up = glm::vec3(0.0f, 1.0f, 0.0f);
+        new_cam.right = glm::cross(new_cam.view, new_cam.up);
+
+        glm::vec3 scene_center = envs->getScene()->envInit.defaultBBox.pMin +
+            envs->getScene()->envInit.defaultBBox.pMax;
+        // glm::vec3 pos = scene_center + new_cam.view * 13.0f;
+
+        glm::vec3 pos = glm::vec3(-3.21665, 0.676769, -9.12807);
+
+        packed_env.cam = packCamera(new_cam);
+        packed_env.cam.posAndTanFOV = glm::vec4(pos, packed_env.cam.posAndTanFOV.w);
         packed_env.prevCam = packCamera(env_backend.prevCam);
         packed_env.data.x = scene_backend.sceneID->getID();
 
