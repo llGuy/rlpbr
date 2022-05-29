@@ -842,8 +842,8 @@ void main()
 
 
     vec3 indirect = vec3(0.0);
-    float div = 1.0 / 100.0;
-    for (int32_t sample_idx = 0; sample_idx < 100; sample_idx++) {
+    float div = 1.0 / float(SPP);
+    for (int32_t sample_idx = 0; sample_idx < SPP; sample_idx++) {
         Sampler rng = makeSampler(idx.x, idx.y, sample_idx, batch_idx + push_const.baseFrameCounter);
 
         indirect += indirectLighting(env, cam.origin, oct, 1.0, BSDFFlagsDiffuse, diff, rng) * div;

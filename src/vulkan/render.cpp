@@ -1424,6 +1424,7 @@ void VulkanBackend::makeBakeOutput()
             bsdf_precomp_, cfg_.auxiliaryOutputs, cfg_.tonemap,
             cfg_.adaptiveSampling, present_.has_value());
 
+    /*
     bake_output_ = new VulkanBatch {
         {},
         move(fb),
@@ -1433,6 +1434,52 @@ void VulkanBackend::makeBakeOutput()
         move(batch_state),
         0,
     };
+    */
+}
+
+Probe VulkanBackend::makeProbe(glm::vec3 pos)
+{
+    auto fb = makeFramebuffer(dev, cfg_, fb_cfg_, alloc);
+
+    // max_tiles * 2 to allow double buffering to hide cpu readback
+    optional<HostBuffer> adaptive_input;
+
+    if (cfg_.adaptiveSampling) {
+        adaptive_input = alloc.makeHostBuffer(
+            sizeof(InputTile) * VulkanConfig::max_tiles * 2, true);
+    }
+
+    auto render_input_staging =
+        alloc.makeStagingBuffer(param_cfg_.totalParamBytes);
+
+    auto render_input_dev =
+        *alloc.makeLocalBuffer(param_cfg_.totalParamBytes, true);
+
+    PerBatchState batch_state = makePerBatchState(
+            dev, fb_cfg_, fb, param_cfg_,
+            render_input_staging,
+            render_input_dev,
+            adaptive_input,
+            FixedDescriptorPool(dev, render_state_.bake, 0, 2),
+            FixedDescriptorPool(dev, render_state_.exposure, 0, 1),
+            FixedDescriptorPool(dev, render_state_.tonemap, 0, 1),
+            bsdf_precomp_, cfg_.auxiliaryOutputs, cfg_.tonemap,
+            cfg_.adaptiveSampling, present_.has_value());
+
+    Probe res = {
+        {
+            {},
+            move(fb),
+            move(adaptive_input),
+            move(render_input_staging),
+            move(render_input_dev),
+            move(batch_state),
+            0,
+        },
+        pos
+    };
+
+    return res;
 }
 
 static PackedCamera packCamera(const Camera &cam)
@@ -1940,12 +1987,12 @@ void VulkanBackend::render(RenderBatch &batch)
 
 void VulkanBackend::bake(RenderBatch &batch)
 {
-    if (!bake_output_)
+    if (!probe_)
     {
-        makeBakeOutput();
+        probe_ = new Probe(makeProbe(glm::vec3(-3.2f, 0.67f, -9.1f)));
     }
 
-    VulkanBatch &batch_backend = *bake_output_;
+    VulkanBatch &batch_backend = probe_->state;
     Environment *envs = batch.getEnvironments();
     PerBatchState &batch_state = batch_backend.state;
     VkCommandBuffer render_cmd = batch_state.renderCmd;
@@ -2460,7 +2507,7 @@ half *VulkanBackend::getOutputPointer(RenderBatch &batch)
 
 half *VulkanBackend::getBakeOutputPointer()
 {
-    auto &batch_backend = *bake_output_;
+    auto &batch_backend = probe_->state;
 
     return batch_backend.state.outputBuffer;
 }

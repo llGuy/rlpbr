@@ -174,6 +174,13 @@ struct VulkanBatch : public BatchBackend {
     uint32_t curBuffer;
 };
 
+struct Probe {
+    using State = VulkanBatch;
+
+    State state;
+    glm::vec3 position;
+};
+
 class VulkanBackend : public RenderBackend {
 public:
     struct Config {
@@ -215,6 +222,8 @@ public:
 
     void makeBakeOutput();
 
+    Probe makeProbe(glm::vec3 pos);
+
 private:
     VulkanBackend(const RenderConfig &cfg,
                   const InitConfig &backend_cfg);
@@ -250,7 +259,7 @@ private:
     std::optional<Denoiser> denoiser_;
 
     // For now just replicate rendering
-    VulkanBatch *bake_output_;
+    Probe *probe_;
 };
 
 }
