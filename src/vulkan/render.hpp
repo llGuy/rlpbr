@@ -223,6 +223,7 @@ public:
     void makeBakeOutput();
 
     Probe makeProbe(glm::vec3 pos);
+    void bakeProbe(RenderBatch &batch, Probe *probe);
 
 private:
     VulkanBackend(const RenderConfig &cfg,
@@ -259,7 +260,7 @@ private:
     std::optional<Denoiser> denoiser_;
 
     // For now just replicate rendering
-    Probe *probe_;
+    std::vector<Probe *> probes_;
 };
 
 }

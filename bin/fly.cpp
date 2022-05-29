@@ -155,7 +155,7 @@ int main(int argc, char *argv[]) {
 
     Renderer renderer({0, 1, 1, img_dims.x, img_dims.y, spp, depth, 0,
         RenderMode::Biased,
-        RenderFlags::AuxiliaryOutputs | RenderFlags::Tonemap,
+        RenderFlags::AuxiliaryOutputs | RenderFlags::Tonemap | RenderFlags::Denoise,
         0.f, BackendSelect::Vulkan});
 
     array<cudaStream_t, 2> copy_streams;

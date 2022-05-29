@@ -1423,18 +1423,6 @@ void VulkanBackend::makeBakeOutput()
             FixedDescriptorPool(dev, render_state_.tonemap, 0, 1),
             bsdf_precomp_, cfg_.auxiliaryOutputs, cfg_.tonemap,
             cfg_.adaptiveSampling, present_.has_value());
-
-    /*
-    bake_output_ = new VulkanBatch {
-        {},
-        move(fb),
-        move(adaptive_input),
-        move(render_input_staging),
-        move(render_input_dev),
-        move(batch_state),
-        0,
-    };
-    */
 }
 
 Probe VulkanBackend::makeProbe(glm::vec3 pos)
@@ -1985,14 +1973,9 @@ void VulkanBackend::render(RenderBatch &batch)
     cur_queue_ = (cur_queue_ + 1) & 1;
 }
 
-void VulkanBackend::bake(RenderBatch &batch)
+void VulkanBackend::bakeProbe(RenderBatch &batch, Probe *probe)
 {
-    if (!probe_)
-    {
-        probe_ = new Probe(makeProbe(glm::vec3(-3.2f, 0.67f, -9.1f)));
-    }
-
-    VulkanBatch &batch_backend = probe_->state;
+    Probe::State &batch_backend = probe->state;
     Environment *envs = batch.getEnvironments();
     PerBatchState &batch_state = batch_backend.state;
     VkCommandBuffer render_cmd = batch_state.renderCmd;
@@ -2092,7 +2075,8 @@ void VulkanBackend::bake(RenderBatch &batch)
             envs->getScene()->envInit.defaultBBox.pMax;
         // glm::vec3 pos = scene_center + new_cam.view * 13.0f;
 
-        glm::vec3 pos = glm::vec3(-3.21665, 0.676769, -9.12807);
+        // glm::vec3 pos = glm::vec3(-3.21665, 0.676769, -9.12807);
+        glm::vec3 pos = probe->position;
 
         packed_env.cam = packCamera(new_cam);
         packed_env.cam.posAndTanFOV = glm::vec4(pos, packed_env.cam.posAndTanFOV.w);
@@ -2488,6 +2472,20 @@ void VulkanBackend::bake(RenderBatch &batch)
     // cur_queue_ = (cur_queue_ + 1) & 1;
 }
 
+void VulkanBackend::bake(RenderBatch &batch)
+{
+    std::cout << "Making probes" << std::endl;
+    probes_.push_back(new Probe(makeProbe(glm::vec3(-3.2f, 0.67f, -9.1f))));
+    probes_.push_back(new Probe(makeProbe(glm::vec3(10.2f, 0.67f, -19.1f))));
+
+    std::cout << "Baking" << std::endl;
+    for (int i = 0; i < probes_.size(); ++i)
+    {
+        bakeProbe(batch, probes_[i]);
+    }
+    std::cout << "Finished baking" << std::endl;
+}
+
 void VulkanBackend::waitForBatch(RenderBatch &batch)
 {
     auto &batch_backend = *getVkBatch(batch);
@@ -2507,7 +2505,7 @@ half *VulkanBackend::getOutputPointer(RenderBatch &batch)
 
 half *VulkanBackend::getBakeOutputPointer()
 {
-    auto &batch_backend = probe_->state;
+    auto &batch_backend = probes_[1]->state;
 
     return batch_backend.state.outputBuffer;
 }
