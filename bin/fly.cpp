@@ -155,7 +155,7 @@ int main(int argc, char *argv[]) {
 
     Renderer renderer({0, 1, 1, img_dims.x, img_dims.y, spp, depth, 0,
         RenderMode::Biased,
-        RenderFlags::AuxiliaryOutputs | RenderFlags::Tonemap | RenderFlags::Denoise,
+        RenderFlags::AuxiliaryOutputs | RenderFlags::Tonemap,
         0.f, BackendSelect::Vulkan});
 
     array<cudaStream_t, 2> copy_streams;
@@ -219,8 +219,8 @@ int main(int argc, char *argv[]) {
 
     renderer.bake(batch);
 
-    // renderer.render(batch);
-    // renderer.waitForBatch(batch);
+    renderer.render(batch);
+    renderer.waitForBatch(batch);
 
     auto time_prev = chrono::steady_clock::now();
     uint32_t frame_idx = 0;
@@ -271,11 +271,11 @@ int main(int argc, char *argv[]) {
                  << "U: " << glm::to_string(cam.up) << "\n";
         }
 
-        // renderer.render(batch);
-        // renderer.waitForBatch(batch);
+        renderer.render(batch);
+        renderer.waitForBatch(batch);
 
-        // half *output = renderer.getOutputPointer(batch);
-        half *output = renderer.getBakeOutputPointer();
+        half *output = renderer.getOutputPointer(batch);
+        // half *output = renderer.getBakeOutputPointer();
 
 
         glNamedFramebufferTexture(read_fbos[frame_idx], GL_COLOR_ATTACHMENT0,

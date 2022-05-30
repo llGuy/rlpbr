@@ -101,6 +101,7 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
     uint32_t pixels_per_batch = batch_fb_width * batch_fb_height;
 
     uint32_t output_bytes = 4 * sizeof(uint16_t) * pixels_per_batch;
+    cout << output_bytes << endl;
     uint32_t hdr_bytes = 4 * sizeof(float) * pixels_per_batch;
     uint32_t normal_bytes = 3 * sizeof(uint16_t) * pixels_per_batch;
     uint32_t albedo_bytes = 3 * sizeof(uint16_t) * pixels_per_batch;
@@ -320,27 +321,57 @@ static RenderState makeRenderState(const DeviceState &dev,
 
     ShaderPipeline::initCompiler();
 
-    ShaderPipeline rt(dev,
-        { rt_name },
-        {
-            {0, 4, repeat_sampler, 1, 0},
-            {0, 5, clamp_sampler, 1, 0},
+    std::unique_ptr<ShaderPipeline> rt;
+    if (cfg.mode == RenderMode::PathTracer) {
+        rt = make_unique<ShaderPipeline>(ShaderPipeline(dev,
+            { rt_name },
             {
-                1, 1, VK_NULL_HANDLE,
-                VulkanConfig::max_scenes * (VulkanConfig::max_materials *
-                    VulkanConfig::textures_per_material),
-                VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
-                VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT,
+                {0, 4, repeat_sampler, 1, 0},
+                {0, 5, clamp_sampler, 1, 0},
+                {
+                    1, 1, VK_NULL_HANDLE,
+                    VulkanConfig::max_scenes * (VulkanConfig::max_materials *
+                                                VulkanConfig::textures_per_material),
+                    VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+                    VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT,
+                },
+                {
+                    2, 0, VK_NULL_HANDLE,
+                    VulkanConfig::max_env_maps * 2,
+                    VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+                    VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT,
+                },
             },
+            rt_defines,
+                                                        STRINGIFY(SHADER_DIR)));
+    }
+    else {
+        rt = make_unique<ShaderPipeline>(ShaderPipeline(dev,
+            { rt_name },
             {
-                2, 0, VK_NULL_HANDLE,
-                VulkanConfig::max_env_maps * 2,
-                VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
-                VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT,
+                {0, 4, repeat_sampler, 1, 0},
+                {0, 5, clamp_sampler, 1, 0},
+                {
+                    1, 1, VK_NULL_HANDLE,
+                    VulkanConfig::max_scenes * (VulkanConfig::max_materials *
+                                                VulkanConfig::textures_per_material),
+                    VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+                    VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT,
+                },
+                {
+                    2, 0, VK_NULL_HANDLE,
+                    VulkanConfig::max_env_maps * 2,
+                    VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+                    VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT,
+                },
+                // Descriptor set for probe maps
+                {
+                    3, 0, VK_NULL_HANDLE, 2, 0
+                }
             },
-        },
-        rt_defines,
-        STRINGIFY(SHADER_DIR));
+            rt_defines,
+                                                        STRINGIFY(SHADER_DIR)));
+    }
 
     ShaderPipeline exposure(dev,
         { "exposure_histogram.comp" },
@@ -379,7 +410,7 @@ static RenderState makeRenderState(const DeviceState &dev,
     return RenderState {
         repeat_sampler,
         clamp_sampler,
-        move(rt),
+        move(*rt),
         move(exposure),
         move(tonemap),
         move(baking)
@@ -387,7 +418,8 @@ static RenderState makeRenderState(const DeviceState &dev,
 }
 
 static RenderPipelines makePipelines(const DeviceState &dev,
-                                     const RenderState &render_state)
+                                     const RenderState &render_state,
+                                     const RenderConfig &cfg)
 {
     // Pipeline cache (unsaved)
     VkPipelineCacheCreateInfo pcache_info {};
@@ -402,13 +434,17 @@ static RenderPipelines makePipelines(const DeviceState &dev,
         0,
         sizeof(RTPushConstant),
     };
-    // Layout configuration
 
-    array<VkDescriptorSetLayout, 3> desc_layouts {{
+    // Layout configuration
+    vector<VkDescriptorSetLayout> desc_layouts {
         render_state.rt.getLayout(0),
         render_state.rt.getLayout(1),
         render_state.rt.getLayout(2),
-    }};
+    };
+    
+    if (cfg.mode == RenderMode::Biased) {
+        desc_layouts.push_back(render_state.rt.getLayout(3));
+    }
 
     VkPipelineLayoutCreateInfo pt_layout_info;
     pt_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -1264,6 +1300,7 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg,
           cfg.flags & RenderFlags::AdaptiveSample,
           cfg.flags & RenderFlags::Denoise,
       }),
+      rcfg_(cfg),
       inst(makeInstance(init_cfg)),
       dev(makeDevice(inst, cfg, init_cfg)),
       alloc(dev, inst),
@@ -1271,7 +1308,7 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg,
       param_cfg_(
           getParamBufferConfig(cfg.batchSize, alloc)),
       render_state_(makeRenderState(dev, cfg, init_cfg)),
-      pipelines_(makePipelines(dev, render_state_)),
+      pipelines_(makePipelines(dev, render_state_, cfg)),
       transfer_queues_(initTransferQueues(cfg, dev)),
       compute_queues_(initComputeQueues(cfg, dev)),
       bsdf_precomp_(loadPrecomputedTextures(dev, alloc, compute_queues_[0],
@@ -1530,10 +1567,17 @@ void VulkanBackend::render(RenderBatch &batch)
                                      &cur_env_maps_->descSet.hdl,
                                      0, nullptr);
 
+        if (rcfg_.mode == RenderMode::Biased) {
+            dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                         pipelines_.rt.layout, 3, 1,
+                                         &probe_dset_, 0, nullptr);
+        }
+
         shared_scene_state_.lock.lock();
         dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
                                      pipelines_.rt.layout, 1, 1,
                                      &shared_scene_state_.descSet, 0, nullptr);
+
         shared_scene_state_.lock.unlock();
     };
 
@@ -1910,7 +1954,7 @@ void VulkanBackend::render(RenderBatch &batch)
         frame_counter_ += cfg_.batchSize;
     }
 
-    if (cfg_.denoise) {
+    if (cfg_.denoise && rcfg_.mode == RenderMode::PathTracer) {
         submitCmd();
         waitForFenceInfinitely(dev, batch_state.fence);
         resetFence(dev, batch_state.fence);
@@ -2484,6 +2528,156 @@ void VulkanBackend::bake(RenderBatch &batch)
         bakeProbe(batch, probes_[i]);
     }
     std::cout << "Finished baking" << std::endl;
+
+    // Making descriptor sets
+    makeProbeDescriptorSet();
+}
+
+// TODO: Move to double precision later
+void VulkanBackend::makeProbeDescriptorSet()
+{
+    // For transfer and stuff
+    VkCommandPool cmd_pool = makeCmdPool(dev, dev.computeQF);
+    VkCommandBuffer cmd = makeCmdBuffer(dev, cmd_pool);
+
+    int width = fb_cfg_.imgWidth, height = fb_cfg_.imgHeight;
+    size_t byte_size = 4 * sizeof(uint16_t) * width * height;
+
+    Probe &pr = *probes_[0];
+
+    // Make the texture object
+    VkFormat format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    auto [tx, req] = alloc.makeTexture2D(width, height, 1, format);
+
+    // Make the staging buffer with image data
+    /*HostBuffer staging = alloc.makeStagingBuffer(byte_size);
+    char buf[100] = {};
+    memcpy(pr.state.state.outputBuffer, buf, 100);
+    staging.flush(dev);
+    */
+
+    optional<VkDeviceMemory> backing_opt = alloc.alloc(req.size);
+
+    if (!backing_opt.has_value()) {
+        cerr << "Not enough memory for probe texture" << endl;
+        fatalExit();
+    }
+
+    VkDeviceMemory backing = backing_opt.value();
+
+    // Bind the backing to the image object
+    dev.dt.bindImageMemory(dev.hdl, tx.image, backing, 0);
+
+    VkImageViewCreateInfo view_info;
+    view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view_info.pNext = nullptr;
+    view_info.flags = 0;
+    view_info.image = tx.image;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format = format;
+    view_info.components = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
+    view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+    VkImageView view;
+    REQ_VK(dev.dt.createImageView(dev.hdl, &view_info, nullptr, &view));
+
+    // Start command bufer
+    VkCommandBufferBeginInfo begin_info {};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    REQ_VK(dev.dt.beginCommandBuffer(cmd, &begin_info));
+
+    { // Prepare image for transfer
+        VkImageMemoryBarrier barrier = {
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            nullptr,
+            0,
+            VK_ACCESS_TRANSFER_WRITE_BIT,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_QUEUE_FAMILY_IGNORED,
+            VK_QUEUE_FAMILY_IGNORED,
+            tx.image,
+            { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+        };
+
+        dev.dt.cmdPipelineBarrier(
+            cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &barrier);
+    }
+
+    { // Do buffer to image copy
+        VkBufferImageCopy copy_info = {};
+        copy_info.bufferOffset = 0;
+        copy_info.imageSubresource.aspectMask =
+            VK_IMAGE_ASPECT_COLOR_BIT;
+        copy_info.imageSubresource.mipLevel = 0;
+        copy_info.imageSubresource.baseArrayLayer = 0;
+        copy_info.imageSubresource.layerCount = 1;
+        copy_info.imageExtent.width = width;
+        copy_info.imageExtent.height = height;
+        copy_info.imageExtent.depth = 1;
+
+        dev.dt.cmdCopyBufferToImage(
+            cmd, pr.state.fb.outputs[0].buffer, tx.image,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_info);
+    }
+
+    { // Prepare image for shader reading
+        VkImageMemoryBarrier barrier = {
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            nullptr,
+            VK_ACCESS_TRANSFER_WRITE_BIT,
+            VK_ACCESS_SHADER_READ_BIT,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_QUEUE_FAMILY_IGNORED,
+            VK_QUEUE_FAMILY_IGNORED,
+            tx.image,
+            { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+        };
+
+        dev.dt.cmdPipelineBarrier(
+            cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &barrier);
+    }
+
+    REQ_VK(dev.dt.endCommandBuffer(cmd));
+
+    { // Submit command buffer
+        VkSubmitInfo render_submit {};
+        render_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        render_submit.waitSemaphoreCount = 0;
+        render_submit.pWaitSemaphores = nullptr;
+        render_submit.pWaitDstStageMask = nullptr;
+        render_submit.commandBufferCount = 1;
+        render_submit.pCommandBuffers = &cmd;
+
+        VkFence fence = makeFence(dev);
+
+        compute_queues_[0].submit(dev, 1, &render_submit, fence);
+
+        waitForFenceInfinitely(dev, fence);
+
+        dev.dt.destroyFence(dev.hdl, fence, nullptr);
+        dev.dt.destroyCommandPool(dev.hdl, cmd_pool, nullptr);
+    }
+    
+    probe_pool_ = new FixedDescriptorPool(dev, render_state_.rt, 3, 5);
+    VkDescriptorSet dset = probe_pool_->makeSet();
+    { // Make descriptor set for the probe textures
+        VkDescriptorImageInfo info { VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+
+        DescriptorUpdates update(1);
+        update.textures(dset, &info, 1, 0);
+        
+        update.update(dev);
+    }
+    
+    pr.tx = tx;
+    pr.view = view;
+    pr.backing = backing;
+    
+    probe_dset_ = dset;
 }
 
 void VulkanBackend::waitForBatch(RenderBatch &batch)
@@ -2505,7 +2699,7 @@ half *VulkanBackend::getOutputPointer(RenderBatch &batch)
 
 half *VulkanBackend::getBakeOutputPointer()
 {
-    auto &batch_backend = probes_[1]->state;
+    auto &batch_backend = probes_[0]->state;
 
     return batch_backend.state.outputBuffer;
 }

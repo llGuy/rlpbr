@@ -178,7 +178,12 @@ struct Probe {
     using State = VulkanBatch;
 
     State state;
+
     glm::vec3 position;
+
+    LocalTexture tx;
+    VkImageView view;
+    VkDeviceMemory backing;
 };
 
 class VulkanBackend : public RenderBackend {
@@ -225,11 +230,16 @@ public:
     Probe makeProbe(glm::vec3 pos);
     void bakeProbe(RenderBatch &batch, Probe *probe);
 
+    // Make descriptor set with all probes
+    void makeProbeDescriptorSet();
+
 private:
     VulkanBackend(const RenderConfig &cfg,
                   const InitConfig &backend_cfg);
 
     const Config cfg_;
+    
+    const RenderConfig rcfg_;
 
     const InstanceState inst;
     const DeviceState dev;
@@ -261,6 +271,8 @@ private:
 
     // For now just replicate rendering
     std::vector<Probe *> probes_;
+    VkDescriptorSet probe_dset_;
+    FixedDescriptorPool *probe_pool_;
 };
 
 }
