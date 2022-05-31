@@ -232,6 +232,7 @@ public:
 
     // Make descriptor set with all probes
     void makeProbeDescriptorSet();
+    void makeProbeTextureData(Probe *probe, VkCommandBuffer &cmd);
 
 private:
     VulkanBackend(const RenderConfig &cfg,
@@ -273,6 +274,9 @@ private:
     std::vector<Probe *> probes_;
     VkDescriptorSet probe_dset_;
     FixedDescriptorPool *probe_pool_;
+
+    uint32_t probe_width_;
+    uint32_t probe_height_;
 };
 
 }

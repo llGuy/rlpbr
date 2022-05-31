@@ -12,6 +12,10 @@ using namespace std;
 namespace RLpbr {
 namespace vk {
 
+static constexpr uint32_t PROBE_WIDTH = 1000;
+static constexpr uint32_t PROBE_HEIGHT = 1000;
+static constexpr uint32_t PROBE_COUNT = 2;
+
 static InitConfig getInitConfig(const RenderConfig &cfg, bool validate)
 {
     bool use_zsobol = (cfg.flags & RenderFlags::AdaptiveSample) ||
@@ -65,6 +69,39 @@ static ParamBufferConfig getParamBufferConfig(uint32_t batch_size,
     return cfg;
 }
 
+static FramebufferConfig getProbeFramebufferConfig(uint32_t width, uint32_t height)
+{
+    uint32_t pixels_per_batch = width * height;
+
+    uint32_t output_bytes = 4 * sizeof(uint16_t) * pixels_per_batch;
+    uint32_t hdr_bytes = 4 * sizeof(float) * pixels_per_batch;
+    uint32_t normal_bytes = 3 * sizeof(uint16_t) * pixels_per_batch;
+    uint32_t albedo_bytes = 3 * sizeof(uint16_t) * pixels_per_batch;
+    uint32_t reservoir_bytes = sizeof(Reservoir) * pixels_per_batch;
+
+    FramebufferConfig config;
+    config.imgWidth = width;
+    config.imgHeight = height;
+    config.miniBatchSize = 1;
+    config.numImagesWidePerMiniBatch = 1;
+    config.numImagesTallPerMiniBatch = 1;
+    config.numImagesWidePerBatch = 1;
+    config.numImagesTallPerBatch = 1;
+    config.frameWidth = width;
+    config.frameHeight = height;
+    config.numTilesWide = 1;
+    config.numTilesTall = 1;
+    config.outputBytes = output_bytes;
+    config.hdrBytes = hdr_bytes;
+    config.normalBytes = normal_bytes;
+    config.albedoBytes = albedo_bytes;
+    config.reservoirBytes = reservoir_bytes;
+    config.illuminanceBytes = sizeof(float);
+    config.adaptiveBytes = sizeof(AdaptiveTile);
+
+    return config;
+}
+
 static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
 {
     uint32_t batch_size = cfg.batchSize;
@@ -101,7 +138,6 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
     uint32_t pixels_per_batch = batch_fb_width * batch_fb_height;
 
     uint32_t output_bytes = 4 * sizeof(uint16_t) * pixels_per_batch;
-    cout << output_bytes << endl;
     uint32_t hdr_bytes = 4 * sizeof(float) * pixels_per_batch;
     uint32_t normal_bytes = 3 * sizeof(uint16_t) * pixels_per_batch;
     uint32_t albedo_bytes = 3 * sizeof(uint16_t) * pixels_per_batch;
@@ -319,6 +355,10 @@ static RenderState makeRenderState(const DeviceState &dev,
         tonemap_defines.push_back("VALIDATE");
     }
 
+    auto bake_defines = rt_defines;
+    bake_defines[3] = string("RES_X (") + to_string(PROBE_WIDTH) + "u)";
+    bake_defines[4] = string("RES_Y (") + to_string(PROBE_HEIGHT) + "u)";
+
     ShaderPipeline::initCompiler();
 
     std::unique_ptr<ShaderPipeline> rt;
@@ -366,7 +406,8 @@ static RenderState makeRenderState(const DeviceState &dev,
                 },
                 // Descriptor set for probe maps
                 {
-                    3, 0, VK_NULL_HANDLE, 2, 0
+                    // LUC THIS IS WHERE YOU CONTROL HOW MANY DESCRIPTORS ARE IN THE PROBE SET
+                    3, 0, VK_NULL_HANDLE, PROBE_COUNT, 0
                 }
             },
             rt_defines,
@@ -404,7 +445,7 @@ static RenderState makeRenderState(const DeviceState &dev,
                     VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT,
             },
         },
-        rt_defines,
+        bake_defines,
         STRINGIFY(SHADER_DIR));
 
     return RenderState {
@@ -1464,7 +1505,9 @@ void VulkanBackend::makeBakeOutput()
 
 Probe VulkanBackend::makeProbe(glm::vec3 pos)
 {
-    auto fb = makeFramebuffer(dev, cfg_, fb_cfg_, alloc);
+    auto probe_config = getProbeFramebufferConfig(probe_width_, probe_height_);
+
+    auto fb = makeFramebuffer(dev, cfg_, probe_config, alloc);
 
     // max_tiles * 2 to allow double buffering to hide cpu readback
     optional<HostBuffer> adaptive_input;
@@ -1481,7 +1524,7 @@ Probe VulkanBackend::makeProbe(glm::vec3 pos)
         *alloc.makeLocalBuffer(param_cfg_.totalParamBytes, true);
 
     PerBatchState batch_state = makePerBatchState(
-            dev, fb_cfg_, fb, param_cfg_,
+            dev, probe_config, fb, param_cfg_,
             render_input_staging,
             render_input_dev,
             adaptive_input,
@@ -2465,6 +2508,7 @@ void VulkanBackend::bakeProbe(RenderBatch &batch, Probe *probe)
         startRenderSetup();
     }
 
+    #if 0
     if (cfg_.tonemap) {
         // comp barrier and stages here are worst case
         // assuming we're denoising
@@ -2506,6 +2550,7 @@ void VulkanBackend::bakeProbe(RenderBatch &batch, Probe *probe)
             launch_size_.y,
             launch_size_.z);
     }
+    #endif
 
     submitCmd();
 
@@ -2518,9 +2563,12 @@ void VulkanBackend::bakeProbe(RenderBatch &batch, Probe *probe)
 
 void VulkanBackend::bake(RenderBatch &batch)
 {
+    probe_width_ = PROBE_WIDTH;
+    probe_height_ = PROBE_HEIGHT;
+
     std::cout << "Making probes" << std::endl;
     probes_.push_back(new Probe(makeProbe(glm::vec3(-3.2f, 0.67f, -9.1f))));
-    probes_.push_back(new Probe(makeProbe(glm::vec3(10.2f, 0.67f, -19.1f))));
+    probes_.push_back(new Probe(makeProbe(glm::vec3(5.2f, 0.67f, -3.1f))));
 
     std::cout << "Baking" << std::endl;
     for (int i = 0; i < probes_.size(); ++i)
@@ -2533,6 +2581,11 @@ void VulkanBackend::bake(RenderBatch &batch)
     makeProbeDescriptorSet();
 }
 
+void VulkanBackend::makeProbeTextureData(Probe *probe, VkCommandBuffer &cmd)
+{
+    
+}
+
 // TODO: Move to double precision later
 void VulkanBackend::makeProbeDescriptorSet()
 {
@@ -2540,21 +2593,14 @@ void VulkanBackend::makeProbeDescriptorSet()
     VkCommandPool cmd_pool = makeCmdPool(dev, dev.computeQF);
     VkCommandBuffer cmd = makeCmdBuffer(dev, cmd_pool);
 
-    int width = fb_cfg_.imgWidth, height = fb_cfg_.imgHeight;
-    size_t byte_size = 4 * sizeof(uint16_t) * width * height;
+    int width = probe_width_, height = probe_height_;
+    size_t byte_size = 4 * sizeof(uint32_t) * width * height;
 
     Probe &pr = *probes_[0];
 
     // Make the texture object
-    VkFormat format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    VkFormat format = VK_FORMAT_R32G32B32A32_SFLOAT;
     auto [tx, req] = alloc.makeTexture2D(width, height, 1, format);
-
-    // Make the staging buffer with image data
-    /*HostBuffer staging = alloc.makeStagingBuffer(byte_size);
-    char buf[100] = {};
-    memcpy(pr.state.state.outputBuffer, buf, 100);
-    staging.flush(dev);
-    */
 
     optional<VkDeviceMemory> backing_opt = alloc.alloc(req.size);
 
@@ -2618,7 +2664,7 @@ void VulkanBackend::makeProbeDescriptorSet()
         copy_info.imageExtent.depth = 1;
 
         dev.dt.cmdCopyBufferToImage(
-            cmd, pr.state.fb.outputs[0].buffer, tx.image,
+            cmd, pr.state.fb.outputs[1].buffer, tx.image,
             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_info);
     }
 
