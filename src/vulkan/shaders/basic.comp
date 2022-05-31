@@ -124,7 +124,7 @@ layout (set = 1, binding = 1) uniform texture2D textures[];
 
 layout (set = 2, binding = 0) uniform texture2D environmentMaps[];
 
-layout (set = 3, binding = 0) uniform texture2D probe;
+layout (set = 3, binding = 0) uniform texture2D probe[];
 
 
 // This function needs to be defined before the include of 
@@ -338,8 +338,10 @@ void main()
     idx.x = min(idx.x, RES_X - 1);
     idx.y = min(idx.y, RES_Y - 1);
 
+#if 1
     vec2 coordsGL = vec2(float(idx.x) / float(RES_X), float(idx.y) / float(RES_Y));
-    vec3 col = texture(sampler2D(probe, repeatSampler), coordsGL).rgb;
+    vec3 col = texture(sampler2D(probe[0], repeatSampler), coordsGL).rgb;
+#endif
 
 
     // Lookup our location within the launch grid

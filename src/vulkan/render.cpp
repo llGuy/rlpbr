@@ -2158,8 +2158,9 @@ void VulkanBackend::bakeProbe(RenderBatch &batch, Probe *probe)
         new_cam.up = glm::vec3(0.0f, 1.0f, 0.0f);
         new_cam.right = glm::cross(new_cam.view, new_cam.up);
 
-        glm::vec3 scene_center = envs->getScene()->envInit.defaultBBox.pMin +
+        glm::vec3 ms_scene_center = envs->getScene()->envInit.defaultBBox.pMin +
             envs->getScene()->envInit.defaultBBox.pMax;
+
         // glm::vec3 pos = scene_center + new_cam.view * 13.0f;
 
         // glm::vec3 pos = glm::vec3(-3.21665, 0.676769, -9.12807);
@@ -2563,12 +2564,24 @@ void VulkanBackend::bakeProbe(RenderBatch &batch, Probe *probe)
 
 void VulkanBackend::bake(RenderBatch &batch)
 {
+    std::cout << "Making probes" << std::endl;
+
     probe_width_ = PROBE_WIDTH;
     probe_height_ = PROBE_HEIGHT;
 
-    std::cout << "Making probes" << std::endl;
-    probes_.push_back(new Probe(makeProbe(glm::vec3(-3.2f, 0.67f, -9.1f))));
-    probes_.push_back(new Probe(makeProbe(glm::vec3(5.2f, 0.67f, -3.1f))));
+    VulkanBatch &batch_backend = *getVkBatch(batch);
+
+    Environment *envs = batch.getEnvironments();
+    glm::vec3 min = envs->getScene()->envInit.defaultBBox.pMin;
+    glm::vec3 max = envs->getScene()->envInit.defaultBBox.pMax;
+
+    glm::vec4 ws_scene_min = min * batch_backend.state.transformPtr->mat;
+    glm::vec4 ws_scene_max = max * batch_backend.state.transformPtr->mat;
+    glm::vec4 ws_scene_center = (ws_scene_min + ws_scene_max) * 0.5f;
+
+    //probes_.push_back(new Probe(makeProbe(glm::vec3(ws_scene_center))));
+    probes_.push_back(new Probe(makeProbe(ws_scene_center)));
+    probes_.push_back(new Probe(makeProbe(glm::vec3(-2.2f, 0.97f, -10.1f))));
 
     std::cout << "Baking" << std::endl;
     for (int i = 0; i < probes_.size(); ++i)
@@ -2583,20 +2596,10 @@ void VulkanBackend::bake(RenderBatch &batch)
 
 void VulkanBackend::makeProbeTextureData(Probe *probe, VkCommandBuffer &cmd)
 {
-    
-}
-
-// TODO: Move to double precision later
-void VulkanBackend::makeProbeDescriptorSet()
-{
-    // For transfer and stuff
-    VkCommandPool cmd_pool = makeCmdPool(dev, dev.computeQF);
-    VkCommandBuffer cmd = makeCmdBuffer(dev, cmd_pool);
-
     int width = probe_width_, height = probe_height_;
     size_t byte_size = 4 * sizeof(uint32_t) * width * height;
 
-    Probe &pr = *probes_[0];
+    Probe &pr = *probe;
 
     // Make the texture object
     VkFormat format = VK_FORMAT_R32G32B32A32_SFLOAT;
@@ -2626,11 +2629,6 @@ void VulkanBackend::makeProbeDescriptorSet()
 
     VkImageView view;
     REQ_VK(dev.dt.createImageView(dev.hdl, &view_info, nullptr, &view));
-
-    // Start command bufer
-    VkCommandBufferBeginInfo begin_info {};
-    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    REQ_VK(dev.dt.beginCommandBuffer(cmd, &begin_info));
 
     { // Prepare image for transfer
         VkImageMemoryBarrier barrier = {
@@ -2687,6 +2685,26 @@ void VulkanBackend::makeProbeDescriptorSet()
             0, 0, nullptr, 0, nullptr, 1, &barrier);
     }
 
+    pr.tx = tx;
+    pr.view = view;
+    pr.backing = backing;
+}
+
+// TODO: Move to double precision later
+void VulkanBackend::makeProbeDescriptorSet()
+{
+    // For transfer and stuff
+    VkCommandPool cmd_pool = makeCmdPool(dev, dev.computeQF);
+    VkCommandBuffer cmd = makeCmdBuffer(dev, cmd_pool);
+
+    VkCommandBufferBeginInfo begin_info {};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    REQ_VK(dev.dt.beginCommandBuffer(cmd, &begin_info));
+
+    for (auto &pr : probes_) {
+        makeProbeTextureData(pr, cmd);
+    }
+
     REQ_VK(dev.dt.endCommandBuffer(cmd));
 
     { // Submit command buffer
@@ -2711,17 +2729,15 @@ void VulkanBackend::makeProbeDescriptorSet()
     probe_pool_ = new FixedDescriptorPool(dev, render_state_.rt, 3, 5);
     VkDescriptorSet dset = probe_pool_->makeSet();
     { // Make descriptor set for the probe textures
-        VkDescriptorImageInfo info { VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        VkDescriptorImageInfo info0 { VK_NULL_HANDLE, probes_[0]->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        VkDescriptorImageInfo info1 { VK_NULL_HANDLE, probes_[1]->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
 
-        DescriptorUpdates update(1);
-        update.textures(dset, &info, 1, 0);
+        DescriptorUpdates update(2);
+        update.textures(dset, &info0, 1, 0, 0);
+        update.textures(dset, &info1, 1, 0, 1);
         
         update.update(dev);
     }
-    
-    pr.tx = tx;
-    pr.view = view;
-    pr.backing = backing;
     
     probe_dset_ = dset;
 }
