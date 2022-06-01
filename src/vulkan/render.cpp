@@ -2581,13 +2581,14 @@ void VulkanBackend::bake(RenderBatch &batch)
 
     //probes_.push_back(new Probe(makeProbe(glm::vec3(ws_scene_center))));
     probes_.push_back(new Probe(makeProbe(ws_scene_center)));
-    probes_.push_back(new Probe(makeProbe(glm::vec3(-2.2f, 0.97f, -10.1f))));
+    // probes_.push_back(new Probe(makeProbe(glm::vec3(-2.2f, 0.97f, -10.1f))));
 
     std::cout << "Baking" << std::endl;
     for (int i = 0; i < probes_.size(); ++i)
     {
         bakeProbe(batch, probes_[i]);
     }
+
     std::cout << "Finished baking" << std::endl;
 
     // Making descriptor sets
@@ -2729,13 +2730,16 @@ void VulkanBackend::makeProbeDescriptorSet()
     probe_pool_ = new FixedDescriptorPool(dev, render_state_.rt, 3, 5);
     VkDescriptorSet dset = probe_pool_->makeSet();
     { // Make descriptor set for the probe textures
-        VkDescriptorImageInfo info0 { VK_NULL_HANDLE, probes_[0]->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-        VkDescriptorImageInfo info1 { VK_NULL_HANDLE, probes_[1]->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        DescriptorUpdates update(probes_.size());
 
-        DescriptorUpdates update(2);
-        update.textures(dset, &info0, 1, 0, 0);
-        update.textures(dset, &info1, 1, 0, 1);
-        
+        std::vector<VkDescriptorImageInfo> infos;
+        infos.resize(probes_.size());
+
+        for (int i = 0; i < probes_.size(); ++i) {
+            VkDescriptorImageInfo info { VK_NULL_HANDLE, probes_[i]->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            update.textures(dset, &info, 1, 0, 0);
+        }
+
         update.update(dev);
     }
     
