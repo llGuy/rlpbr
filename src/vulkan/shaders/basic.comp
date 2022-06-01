@@ -243,7 +243,149 @@ struct DirectResult {
     vec3 auxAlbedo;
 #endif
     uint32_t instanceID;
+
+    HitInfo hitInfo;
 };
+
+vec3 indirectLighting(Sampler rng, HitInfo info)
+{
+    uint sample_count = 32;
+
+    vec3 res = vec3(0.0);
+    vec3 normal = normalize(info.geoNormal);
+
+    for (int i = 0; i < sample_count; ++i) {
+        vec2 random = samplerGet2D(rng);
+        vec3 local_dir = concentricHemisphere(random);
+        vec3 ws_dir = normalize(localToWorld(local_dir, info.tangentFrame));
+        vec2 octUV = invOctSphereMap(ws_dir);
+
+        res += texture(sampler2D(probe[0], repeatSampler), octUV).rgb * local_dir.z * info.material.rho * 1.0 / M_PI;
+    }
+
+    return res;
+}
+
+#if 0
+PrimaryResult directLightingPT(in u32vec3 idx, in uint32_t linear_idx,
+                             in Camera cam, in Camera prev_cam,
+                             in Environment env, inout Sampler rng)
+{
+    vec3 ray_origin;
+    vec3 ray_dir;
+    RayDifferential ray_diff;
+    computeCameraRay(cam, idx, samplerGet2D(rng), ray_origin, ray_dir,
+                     ray_diff);
+
+    rayQueryEXT primary_query;
+    bool primary_hit = traceShadeRay(primary_query, env.tlasAddr,
+                                     ray_origin, ray_dir, 1);
+    
+    PrimaryResult result;
+
+    if (!primary_hit) {
+        result.vertState.radiance = evalEnvMap(env.envMapIdx, ray_dir);
+        result.vertState.bounceWeight = vec3(0);
+        result.instanceID = 0xFFFF;
+        result.hitNormal = vec3(0);
+        // Not really correct, but what else would we use?
+        result.illuminance = rgbToLuminance(result.vertState.radiance);
+#ifdef AUXILIARY_OUTPUTS
+        result.auxAlbedo = result.vertState.radiance;
+#endif
+        return result;
+    }
+
+    HitInfo hit = processHit(primary_query, env,
+                             ray_origin, ray_dir, ray_diff);
+    result.rayDifferential = ray_diff;
+    result.hitNormal = hit.tangentFrame.normal;
+
+    result.instanceID = getHitInstance(primary_query);
+
+#ifdef AUXILIARY_OUTPUTS
+    result.auxAlbedo = hit.material.rho;
+#endif
+
+    vec3 wo = normalize(worldToLocalOutgoing(-ray_dir, hit.tangentFrame));
+    BSDFParams bsdf_params = buildBSDF(hit.material, wo);
+
+    Reservoir cur = initReservoirRIS(bsdf_params, wo, RESERVOIR_M, rng);
+
+    vec2 prev_screen_pos = getScreenSpacePosition(prev_cam, hit.position);
+    i32vec2 prev_pixel_coords = getPixelCoords(prev_screen_pos);
+
+    result.vertState.radiance = hit.material.emittance;
+
+    LightInfo light_info = sampleLights(rng, env,
+        hit.position, hit.geoNormal, hit.tangentFrame.normal);
+    
+    vec3 wi = normalize(worldToLocalIncoming(light_info.lightSample.toLight,
+                                             hit.tangentFrame));
+
+    float bsdf_pdf;
+    vec3 bsdf_response = evalBSDF(bsdf_params, wo, wi, bsdf_pdf);
+
+#ifdef USE_MIS
+    float mis_weight = misPowerHeuristic(1, light_info.lightSample.pdf, 1,
+                                         bsdf_pdf);
+#else
+    float mis_weight = 1.f;
+#endif
+
+    vec3 nee = light_info.lightSample.pdf == 0.f ? vec3(0.f) :
+        (bsdf_response * light_info.lightSample.radiance * 
+            mis_weight / light_info.lightSample.pdf);
+
+    // If bsdf_pdf is 0, that means that light can't actually contribute to this
+    // surface (delta reflection / transmission)
+    float illuminance =
+        (light_info.lightSample.pdf == 0.f || bsdf_pdf == 0.f) ? 0.f :
+            (rgbToLuminance(light_info.lightSample.radiance) * abs(wi.z) /
+             light_info.lightSample.pdf);
+
+    // Compute bounce
+    SampleResult bounce = sampleBSDF(rng, bsdf_params, wo);
+    float bounce_pdf = pdfBSDF(bsdf_params, wo, bounce.dir);
+
+    vec3 bounce_dir = localToWorld(bounce.dir, hit.tangentFrame);
+
+    bool pass_through = handleBounce(rng, hit, ray_dir,
+                                     bounce_dir,
+                                     result.vertState.bounceOrigin,
+                                     result.vertState.bounceDir);
+
+    bool occluded = traceShadowRay(env.tlasAddr,
+                                   light_info.shadowRayOrigin,
+                                   light_info.lightSample.toLight,
+                                   light_info.shadowRayLength,
+                                   1);
+    
+    // Start setup for next bounce
+    if (occluded) {
+        nee = vec3(0);
+        illuminance = 0.f;
+    }
+
+    result.vertState.radiance += nee;
+    result.illuminance = 0.18f * illuminance;
+
+    if (pass_through) {
+        result.vertState.radiance = vec3(0);
+        result.vertState.bouncePDF = 1.f - hit.material.transparencyMask;
+        result.vertState.bounceWeight = vec3(result.vertState.bouncePDF);
+        result.vertState.bounceFlags = BSDFFlagsDelta;
+    } else {
+        result.vertState.bounceWeight =
+            hit.material.transparencyMask * bounce.weight;
+        result.vertState.bouncePDF =
+            hit.material.transparencyMask * bounce_pdf;
+        result.vertState.bounceFlags = bounce.flags;
+    }
+
+    return result;
+}
+#endif
 
 DirectResult directLighting(in u32vec3 idx, in Camera cam, in Camera prev_cam,
                             in Environment env, inout Sampler rng)
@@ -275,6 +417,9 @@ DirectResult directLighting(in u32vec3 idx, in Camera cam, in Camera prev_cam,
     result.instanceID = getHitInstance(primary_query);
 
     HitInfo hit = processHit(primary_query, env, ray_origin, ray_dir, ray_diff);
+    result.hitInfo = hit;
+
+    vec3 indirect = indirectLighting(rng, result.hitInfo);
 
 #ifdef AUXILIARY_OUTPUTS
     vec3 view_normal = vec3(
@@ -296,7 +441,8 @@ DirectResult directLighting(in u32vec3 idx, in Camera cam, in Camera prev_cam,
     vec2 prev_screen_pos = getScreenSpacePosition(prev_cam, hit.position);
     i32vec2 prev_pixel_coords = getPixelCoords(prev_screen_pos);
 
-    vec3 ambient = vec3(0.2);
+    //vec3 ambient = vec3(0.2);
+    vec3 ambient = indirect;
     ambient *= env.lightFilter;
 
     result.radiance = hit.material.emittance + ambient * hit.material.rho;
@@ -338,7 +484,7 @@ void main()
     idx.x = min(idx.x, RES_X - 1);
     idx.y = min(idx.y, RES_Y - 1);
 
-#if 1
+#if 0
     vec2 coordsGL = vec2(float(idx.x) / float(RES_X), float(idx.y) / float(RES_Y));
     vec3 col = texture(sampler2D(probe[0], repeatSampler), coordsGL).rgb;
 #endif
@@ -350,9 +496,9 @@ void main()
     uint32_t linear_idx = batch_idx * RES_Y * RES_X + idx.y * RES_X + idx.x;
     uint32_t base_out_offset = 4 * linear_idx;
 
-    setOutput(base_out_offset, col, 0);
+    // setOutput(base_out_offset, col, 0);
 
-#if 0
+#if 1
 
 #ifdef AUXILIARY_OUTPUTS
     uint32_t base_aux_offset = 3 * linear_idx;

@@ -175,15 +175,17 @@ struct VulkanBatch : public BatchBackend {
 };
 
 struct Probe {
-    using State = VulkanBatch;
-
-    State state;
-
     glm::vec3 position;
 
     LocalTexture tx;
     VkImageView view;
     VkDeviceMemory backing;
+};
+
+struct ProbeGenState {
+    using State = VulkanBatch;
+
+    State state;
 };
 
 class VulkanBackend : public RenderBackend {
@@ -227,8 +229,8 @@ public:
 
     void makeBakeOutput();
 
-    Probe makeProbe(glm::vec3 pos);
-    void bakeProbe(RenderBatch &batch, Probe *probe);
+    ProbeGenState makeProbeGenState();
+    Probe *bakeProbe(glm::vec3 pos, RenderBatch &batch);
 
     // Make descriptor set with all probes
     void makeProbeDescriptorSet();
@@ -271,6 +273,7 @@ private:
     std::optional<Denoiser> denoiser_;
 
     // For now just replicate rendering
+    ProbeGenState *probe_gen_;
     std::vector<Probe *> probes_;
     VkDescriptorSet probe_dset_;
     FixedDescriptorPool *probe_pool_;

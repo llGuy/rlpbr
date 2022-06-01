@@ -14,7 +14,7 @@ namespace vk {
 
 static constexpr uint32_t PROBE_WIDTH = 1000;
 static constexpr uint32_t PROBE_HEIGHT = 1000;
-static constexpr uint32_t PROBE_COUNT = 2;
+static constexpr uint32_t PROBE_COUNT = 3;
 
 static InitConfig getInitConfig(const RenderConfig &cfg, bool validate)
 {
@@ -1368,7 +1368,7 @@ VulkanBackend::VulkanBackend(const RenderConfig &cfg,
           make_optional<PresentationState>(inst, dev, dev.computeQF,
                                            1, glm::u32vec2(1, 1), true) :
           optional<PresentationState>()),
-      denoiser_((cfg.flags & RenderFlags::Denoise) ?
+      denoiser_((cfg.flags & RenderFlags::Denoise || cfg.mode == RenderMode::Biased) ?
                 make_optional<Denoiser>(alloc, cfg) :
                 optional<Denoiser>())
 {
@@ -1503,7 +1503,7 @@ void VulkanBackend::makeBakeOutput()
             cfg_.adaptiveSampling, present_.has_value());
 }
 
-Probe VulkanBackend::makeProbe(glm::vec3 pos)
+ProbeGenState VulkanBackend::makeProbeGenState()
 {
     auto probe_config = getProbeFramebufferConfig(probe_width_, probe_height_);
 
@@ -1534,7 +1534,7 @@ Probe VulkanBackend::makeProbe(glm::vec3 pos)
             bsdf_precomp_, cfg_.auxiliaryOutputs, cfg_.tonemap,
             cfg_.adaptiveSampling, present_.has_value());
 
-    Probe res = {
+    ProbeGenState res = {
         {
             {},
             move(fb),
@@ -1544,7 +1544,6 @@ Probe VulkanBackend::makeProbe(glm::vec3 pos)
             move(batch_state),
             0,
         },
-        pos
     };
 
     return res;
@@ -2060,9 +2059,10 @@ void VulkanBackend::render(RenderBatch &batch)
     cur_queue_ = (cur_queue_ + 1) & 1;
 }
 
-void VulkanBackend::bakeProbe(RenderBatch &batch, Probe *probe)
+Probe *VulkanBackend::bakeProbe(glm::vec3 position, RenderBatch &batch)
 {
-    Probe::State &batch_backend = probe->state;
+    // First render
+    ProbeGenState::State &batch_backend = probe_gen_->state;
     Environment *envs = batch.getEnvironments();
     PerBatchState &batch_state = batch_backend.state;
     VkCommandBuffer render_cmd = batch_state.renderCmd;
@@ -2164,7 +2164,7 @@ void VulkanBackend::bakeProbe(RenderBatch &batch, Probe *probe)
         // glm::vec3 pos = scene_center + new_cam.view * 13.0f;
 
         // glm::vec3 pos = glm::vec3(-3.21665, 0.676769, -9.12807);
-        glm::vec3 pos = probe->position;
+        glm::vec3 pos = position;
 
         packed_env.cam = packCamera(new_cam);
         packed_env.cam.posAndTanFOV = glm::vec4(pos, packed_env.cam.posAndTanFOV.w);
@@ -2494,7 +2494,7 @@ void VulkanBackend::bakeProbe(RenderBatch &batch, Probe *probe)
         frame_counter_ += cfg_.batchSize;
     }
 
-    if (cfg_.denoise) {
+    if (/*cfg_.denoise*/ true) {
         submitCmd();
         waitForFenceInfinitely(dev, batch_state.fence);
         resetFence(dev, batch_state.fence);
@@ -2557,7 +2557,41 @@ void VulkanBackend::bakeProbe(RenderBatch &batch, Probe *probe)
 
     dev.dt.deviceWaitIdle(dev.hdl);
 
+    // Make texture data now
+    VkCommandPool cmd_pool = makeCmdPool(dev, dev.computeQF);
+    VkCommandBuffer cmd = makeCmdBuffer(dev, cmd_pool);
+
+    VkCommandBufferBeginInfo begin_info {};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    REQ_VK(dev.dt.beginCommandBuffer(cmd, &begin_info));
+
+    Probe *probe = new Probe();
+    makeProbeTextureData(probe, cmd);
+
+    REQ_VK(dev.dt.endCommandBuffer(cmd));
+
+    { // Submit command buffer
+        VkSubmitInfo render_submit {};
+        render_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        render_submit.waitSemaphoreCount = 0;
+        render_submit.pWaitSemaphores = nullptr;
+        render_submit.pWaitDstStageMask = nullptr;
+        render_submit.commandBufferCount = 1;
+        render_submit.pCommandBuffers = &cmd;
+
+        VkFence fence = makeFence(dev);
+
+        compute_queues_[0].submit(dev, 1, &render_submit, fence);
+
+        waitForFenceInfinitely(dev, fence);
+
+        dev.dt.destroyFence(dev.hdl, fence, nullptr);
+        dev.dt.destroyCommandPool(dev.hdl, cmd_pool, nullptr);
+    }
+
     batch_backend.curBuffer = prev_cur_buffer;
+
+    return probe;
     // batch_backend.curBuffer = (batch_backend.curBuffer + 1) & 1;
     // cur_queue_ = (cur_queue_ + 1) & 1;
 }
@@ -2569,20 +2603,33 @@ void VulkanBackend::bake(RenderBatch &batch)
     probe_width_ = PROBE_WIDTH;
     probe_height_ = PROBE_HEIGHT;
 
+    // Allocate resources to render a probe
+    probe_gen_ = new ProbeGenState(makeProbeGenState());
+
     VulkanBatch &batch_backend = *getVkBatch(batch);
 
     Environment *envs = batch.getEnvironments();
     glm::vec3 min = envs->getScene()->envInit.defaultBBox.pMin;
     glm::vec3 max = envs->getScene()->envInit.defaultBBox.pMax;
+    glm::vec3 center = (min + max) * 0.5f;
 
-    glm::vec4 ws_scene_min = min * batch_backend.state.transformPtr->mat;
-    glm::vec4 ws_scene_max = max * batch_backend.state.transformPtr->mat;
-    glm::vec4 ws_scene_center = (ws_scene_min + ws_scene_max) * 0.5f;
+    std::vector<glm::vec3> positions = {
+        center,
+        min,
+        max,
+    };
+
+    std::cout << "Baking" << std::endl;
+    for (int i = 0; i < positions.size(); ++i) {
+        probes_.push_back(bakeProbe(positions[i], batch));
+    }
+    std::cout << "Finished baking" << std::endl;
 
     //probes_.push_back(new Probe(makeProbe(glm::vec3(ws_scene_center))));
-    probes_.push_back(new Probe(makeProbe(ws_scene_center)));
+    // probes_.push_back(new Probe(makeProbe(ws_scene_center)));
     // probes_.push_back(new Probe(makeProbe(glm::vec3(-2.2f, 0.97f, -10.1f))));
 
+#if 0
     std::cout << "Baking" << std::endl;
     for (int i = 0; i < probes_.size(); ++i)
     {
@@ -2590,6 +2637,7 @@ void VulkanBackend::bake(RenderBatch &batch)
     }
 
     std::cout << "Finished baking" << std::endl;
+#endif
 
     // Making descriptor sets
     makeProbeDescriptorSet();
@@ -2663,7 +2711,7 @@ void VulkanBackend::makeProbeTextureData(Probe *probe, VkCommandBuffer &cmd)
         copy_info.imageExtent.depth = 1;
 
         dev.dt.cmdCopyBufferToImage(
-            cmd, pr.state.fb.outputs[1].buffer, tx.image,
+            cmd, probe_gen_->state.fb.outputs[1].buffer, tx.image,
             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_info);
     }
 
@@ -2694,6 +2742,7 @@ void VulkanBackend::makeProbeTextureData(Probe *probe, VkCommandBuffer &cmd)
 // TODO: Move to double precision later
 void VulkanBackend::makeProbeDescriptorSet()
 {
+#if 0
     // For transfer and stuff
     VkCommandPool cmd_pool = makeCmdPool(dev, dev.computeQF);
     VkCommandBuffer cmd = makeCmdBuffer(dev, cmd_pool);
@@ -2726,6 +2775,7 @@ void VulkanBackend::makeProbeDescriptorSet()
         dev.dt.destroyFence(dev.hdl, fence, nullptr);
         dev.dt.destroyCommandPool(dev.hdl, cmd_pool, nullptr);
     }
+#endif
     
     probe_pool_ = new FixedDescriptorPool(dev, render_state_.rt, 3, 5);
     VkDescriptorSet dset = probe_pool_->makeSet();
@@ -2736,8 +2786,8 @@ void VulkanBackend::makeProbeDescriptorSet()
         infos.resize(probes_.size());
 
         for (int i = 0; i < probes_.size(); ++i) {
-            VkDescriptorImageInfo info { VK_NULL_HANDLE, probes_[i]->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-            update.textures(dset, &info, 1, 0, 0);
+            infos[i] = { VK_NULL_HANDLE, probes_[i]->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            update.textures(dset, &infos[i], 1, 0, i);
         }
 
         update.update(dev);
@@ -2765,7 +2815,7 @@ half *VulkanBackend::getOutputPointer(RenderBatch &batch)
 
 half *VulkanBackend::getBakeOutputPointer()
 {
-    auto &batch_backend = probes_[0]->state;
+    auto &batch_backend = probe_gen_->state;
 
     return batch_backend.state.outputBuffer;
 }
