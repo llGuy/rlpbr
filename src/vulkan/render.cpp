@@ -5,6 +5,7 @@
 
 #include <iostream>
 #include <sstream>
+#include <glm/gtx/string_cast.hpp>
 #include <cmath>
 
 using namespace std;
@@ -14,7 +15,8 @@ namespace vk {
 
 static constexpr uint32_t PROBE_WIDTH = 1000;
 static constexpr uint32_t PROBE_HEIGHT = 1000;
-static constexpr uint32_t PROBE_COUNT = 3;
+static constexpr glm::ivec3 PROBE_DIM = glm::ivec3(3, 3, 3);
+static constexpr uint32_t PROBE_COUNT = PROBE_DIM.x * PROBE_DIM.y * PROBE_DIM.z;
 
 static InitConfig getInitConfig(const RenderConfig &cfg, bool validate)
 {
@@ -2613,31 +2615,30 @@ void VulkanBackend::bake(RenderBatch &batch)
     glm::vec3 max = envs->getScene()->envInit.defaultBBox.pMax;
     glm::vec3 center = (min + max) * 0.5f;
 
-    std::vector<glm::vec3> positions = {
-        center,
-        min,
-        max,
-    };
+    std::cout << "min : " << glm::to_string(min) << std::endl;
+    std::cout << "max : " << glm::to_string(max) << std::endl;
+
+    float right = (max.x - min.x) / (float)(PROBE_DIM.x - 1);
+    float up = (max.y - min.y) / (float)(PROBE_DIM.y - 1);
+    float forward = (max.z - min.z) / (float)(PROBE_DIM.z - 1);
+
+    std::vector<glm::vec3> positions;
+
+    for (int z = 0; z < PROBE_DIM.z; ++z) {
+        for (int y = 0; y < PROBE_DIM.y; ++y) {
+            for (int x = 0; x < PROBE_DIM.x; ++x) {
+                glm::vec3 pos = glm::vec3(right * x, up * y, forward * z) + min;
+                positions.push_back(pos);
+            }
+        }
+    }
 
     std::cout << "Baking" << std::endl;
     for (int i = 0; i < positions.size(); ++i) {
         probes_.push_back(bakeProbe(positions[i], batch));
+        std::cout << "Finished " << (i+1) << " / " << positions.size() << " probes (at " << glm::to_string(positions[i]) << ")" << std::endl;
     }
     std::cout << "Finished baking" << std::endl;
-
-    //probes_.push_back(new Probe(makeProbe(glm::vec3(ws_scene_center))));
-    // probes_.push_back(new Probe(makeProbe(ws_scene_center)));
-    // probes_.push_back(new Probe(makeProbe(glm::vec3(-2.2f, 0.97f, -10.1f))));
-
-#if 0
-    std::cout << "Baking" << std::endl;
-    for (int i = 0; i < probes_.size(); ++i)
-    {
-        bakeProbe(batch, probes_[i]);
-    }
-
-    std::cout << "Finished baking" << std::endl;
-#endif
 
     // Making descriptor sets
     makeProbeDescriptorSet();
