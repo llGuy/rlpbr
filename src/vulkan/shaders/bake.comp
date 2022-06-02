@@ -740,7 +740,6 @@ void main()
     idx.y = min(idx.y, RES_Y - 1);
 
     vec2 coordsGL = vec2(float(idx.x) / float(RES_X), float(idx.y) / float(RES_Y));
-    vec3 oct = octSphereMap(coordsGL);
 
     uint32_t linear_idx = batch_idx * RES_Y * RES_X + idx.y * RES_X + idx.x;
     uint32_t base_out_offset = 4 * linear_idx;
@@ -845,6 +844,9 @@ void main()
     float div = 1.0 / float(SPP);
     for (int32_t sample_idx = 0; sample_idx < SPP; sample_idx++) {
         Sampler rng = makeSampler(idx.x, idx.y, sample_idx, batch_idx + push_const.baseFrameCounter);
+
+        vec2 random = samplerGet2D(rng);
+        vec3 oct = octSphereMap(coordsGL + random * vec2(1.0/RES_X, 1.0/RES_Y));
 
         indirect += indirectLighting(env, cam.origin, oct, 1.0, BSDFFlagsDiffuse, diff, rng) * div;
     }
