@@ -759,6 +759,10 @@ vec3 indirectLightingLUT(
 
     vec3 res = vec3(0.0);
 
+    res = texture(sampler2D(probe[0], repeatSampler), octUV).rgb;
+    return res;
+
+    #if 0
     res += getProbeRadiance(octUV, probe_min + vec3(0.0, 0.0f, 0.0f));
     res += getProbeRadiance(octUV, probe_min + vec3(1.0, 0.0f, 0.0f));
     res += getProbeRadiance(octUV, probe_min + vec3(0.0, 1.0f, 0.0f));
@@ -770,6 +774,7 @@ vec3 indirectLightingLUT(
     res += getProbeRadiance(octUV, probe_min + vec3(1.0, 1.0f, 1.0f));
 
     return res * 0.125;
+    #endif
 }
 
 // Entry point
@@ -813,6 +818,15 @@ void main()
 
     uint32_t linear_idx = batch_idx * RES_Y * RES_X + idx.y * RES_X + idx.x;
     uint32_t base_out_offset = 4 * linear_idx;
+
+#if 0
+    vec2 coordsGL = vec2(float(idx.x) / float(RES_X), float(idx.y) / float(RES_Y));
+    vec3 col = texture(sampler2D(probe[push_const.probeIdx], repeatSampler), coordsGL).rgb;
+
+    setOutput(base_out_offset, col, 0);
+#endif
+
+#if 1
 
 #ifdef AUXILIARY_OUTPUTS
     uint32_t base_aux_offset = 3 * linear_idx;
@@ -1038,5 +1052,7 @@ void main()
     }
 
     memoryBarrier();
+#endif
+
 #endif
 }

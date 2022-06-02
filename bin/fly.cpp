@@ -20,6 +20,8 @@ const float mouse_speed = 2e-4;
 const float movement_speed = 1.5;
 const float rotate_speed = 1.25;
 
+extern int probeIdx;
+
 static GLFWwindow * makeWindow(const glm::u32vec2 &dim)
 {
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
@@ -57,6 +59,22 @@ void windowKeyHandler(GLFWwindow *window, int key, int, int action, int)
 
     glm::i8vec3 cur_movement(0, 0, 0);
     switch (key) {
+    case GLFW_KEY_H: {
+        if (action == GLFW_PRESS) {
+            std::cout << "Something" << std::endl;
+            probeIdx -= 1;
+            if (probeIdx < 0) probeIdx = 124;
+        }
+    } break;
+
+    case GLFW_KEY_L: {
+        if (action == GLFW_PRESS) {
+            std::cout << "Something" << std::endl;
+            probeIdx += 1;
+            if (probeIdx > 124) probeIdx = 0;
+        }
+    } break;
+
         case GLFW_KEY_ESCAPE: {
             if (action == GLFW_PRESS) {
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);

@@ -8,14 +8,16 @@
 #include <glm/gtx/string_cast.hpp>
 #include <cmath>
 
+int probeIdx = 0;
+
 using namespace std;
 
 namespace RLpbr {
 namespace vk {
 
-static constexpr uint32_t PROBE_WIDTH = 32;
-static constexpr uint32_t PROBE_HEIGHT = 32;
-static constexpr glm::ivec3 PROBE_DIM = glm::ivec3(5, 5, 5);
+static constexpr uint32_t PROBE_WIDTH = 128;
+static constexpr uint32_t PROBE_HEIGHT = 128;
+static constexpr glm::ivec3 PROBE_DIM = glm::ivec3(1);
 static constexpr uint32_t PROBE_COUNT = PROBE_DIM.x * PROBE_DIM.y * PROBE_DIM.z;
 
 static InitConfig getInitConfig(const RenderConfig &cfg, bool validate)
@@ -1598,6 +1600,7 @@ void VulkanBackend::render(RenderBatch &batch)
             PROBE_DIM.z,
             glm::vec4(envs->getScene()->envInit.defaultBBox.pMin, 0.0f),
             glm::vec4(envs->getScene()->envInit.defaultBBox.pMax, 0.0f),
+            probeIdx,
         };
 
         dev.dt.cmdPushConstants(render_cmd, pipelines_.rt.layout,
@@ -2627,7 +2630,9 @@ void VulkanBackend::bake(RenderBatch &batch)
     float up = (max.y - min.y) / (float)(PROBE_DIM.y - 1);
     float forward = (max.z - min.z) / (float)(PROBE_DIM.z - 1);
 
-    std::vector<glm::vec3> positions;
+    std::vector<glm::vec3> positions = {center};
+
+    #if 0
 
     for (int z = 0; z < PROBE_DIM.z; ++z) {
         for (int y = 0; y < PROBE_DIM.y; ++y) {
@@ -2637,6 +2642,7 @@ void VulkanBackend::bake(RenderBatch &batch)
             }
         }
     }
+    #endif
 
     std::cout << "Baking" << std::endl;
     for (int i = 0; i < positions.size(); ++i) {

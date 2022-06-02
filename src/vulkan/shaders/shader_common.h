@@ -32,6 +32,7 @@ struct RTPushConstant {
     uint probeDepth;
     vec4 boxMin;
     vec4 boxMax;
+    uint probeIdx;
 };
 
 struct PackedLight {

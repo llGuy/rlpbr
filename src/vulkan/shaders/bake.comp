@@ -689,7 +689,7 @@ vec3 indirectLighting(in Environment env, in vec3 ray_origin, in vec3 ray_dir,
 
         PathVertexState bounce_state =
             processPathVertex(rng, env, hit, ray_dir, ray_origin, bounce_pdf,
-                              bounce_flags, path_depth < MAX_DEPTH);
+                              bounce_flags, path_depth < MAX_DEPTH, hit_rough);
         vec3 vert_contrib = path_weight * bounce_state.radiance;
 #ifdef INDIRECT_CLAMP
         vert_contrib = min(vert_contrib, vec3(INDIRECT_CLAMP));
