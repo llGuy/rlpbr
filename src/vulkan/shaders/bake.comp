@@ -493,10 +493,13 @@ PathVertexState processPathVertex(inout Sampler rng, in Environment env,
     return result;
 }
 
+
 vec3 envMapMiss(uint32_t map_idx, vec3 ray_dir, float bounce_pdf,
                 uint32_t bounce_flags, uint32_t num_lights,
                 bool mis_only)
 {
+    return vec3(0.0);
+
     vec3 radiance = evalEnvMap(map_idx, ray_dir);
 
     if (bool(bounce_flags & BSDFFlagsDelta)) {
