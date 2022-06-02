@@ -504,10 +504,13 @@ LightInfo sampleLights(inout Sampler rng, in Environment env,
 
 #else
 
+#define TO_LIGHT vec3(0.399129, 0.638264, -0.473601)
+#define LIGHT_RADIANCE vec3(5.0)
+
 LightInfo hackySampleLights(inout Sampler rng, in Environment env, 
     in vec3 origin, in vec3 base_normal, in vec3 shading_normal)
 {
-    vec3 to_light = ;
+    vec3 to_light = normalize(TO_LIGHT);
     vec3 dir_check = to_light;
 
     vec3 shadow_offset_normal =
@@ -516,7 +519,7 @@ LightInfo hackySampleLights(inout Sampler rng, in Environment env,
     vec3 shadow_origin =
         offsetRayOrigin(origin, shadow_offset_normal);
 
-    LightSample light_sample = LightSample(vec3(0) /*to_light*/, vec3(0) /*5.f - radiance*/, 0.f /*1.0*/);
+    LightSample light_sample = LightSample(to_light, LIGHT_RADIANCE, 1.0);
 
     LightInfo info = {
         light_sample,
