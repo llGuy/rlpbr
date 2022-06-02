@@ -27,6 +27,11 @@ struct PackedEnv {
 
 struct RTPushConstant {
     uint baseFrameCounter;
+    uint probeWidth;
+    uint probeHeight;
+    uint probeDepth;
+    vec4 boxMin;
+    vec4 boxMax;
 };
 
 struct PackedLight {

@@ -644,6 +644,8 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
     return result;
 }
 
+
+
 vec3 indirectLighting(in Environment env, in vec3 ray_origin, in vec3 ray_dir,
                       in float bounce_pdf, in uint32_t bounce_flags,
                       inout RayDifferential ray_diff, inout Sampler rng)
@@ -721,30 +723,53 @@ void adaptiveTileUnlock(uint32_t tile_idx)
 }
 #endif
 
+uint probeIndexFromCoord(vec3 coord) {
+    ivec3 icoord = ivec3(coord);
+    return icoord.x + icoord.y * push_const.probeWidth +
+        icoord.z * push_const.probeWidth * push_const.probeHeight;
+}
+
+vec3 getProbeRadiance(vec2 oct, vec3 coord) {
+    uint idx = probeIndexFromCoord(coord);
+    return texture(sampler2D(probe[idx], repeatSampler), oct).rgb;
+}
+
 vec3 indirectLightingLUT(
     in Environment env, in vec3 ray_origin, in vec3 ray_dir, in float bounce_pdf,
     in uint32_t bound_flags, inout RayDifferential ray_diff, inout Sampler rng)
 {
-    vec2 octUV = invOctSphereMap(ray_dir);
-    return texture(sampler2D(probe[0], repeatSampler), octUV).rgb;
+    float right = (push_const.boxMax.x - push_const.boxMin.x) / float(push_const.probeWidth - 1);
+    float up = (push_const.boxMax.y - push_const.boxMin.y) / float(push_const.probeHeight - 1);
+    float forward = (push_const.boxMax.z - push_const.boxMin.z) / float(push_const.probeDepth - 1);
 
-    #if 0
-    uint sample_count = 32;
+    mat3 invMatrix = mat3 (
+        1.0/right, 0.0, 0.0,
+        0.0, 1.0/up, 0.0,
+        0.0, 0.0, 1.0/forward);
+
+    vec3 extent = vec3(push_const.probeWidth, push_const.probeHeight, push_const.probeDepth);
+
+    vec3 local_ray_origin = ray_origin - push_const.boxMin.xyz;
+    vec3 probe_coord = clamp(floor(invMatrix * local_ray_origin), vec3(0.0), vec3(extent)-vec3(1.0));
+    
+    vec3 probe_min = probe_coord;
+    vec3 probe_max = probe_coord + vec3(1.0);
+
+    vec2 octUV = invOctSphereMap(ray_dir);
 
     vec3 res = vec3(0.0);
-    vec3 normal = normalize(info.geoNormal);
 
-    for (int i = 0; i < sample_count; ++i) {
-        vec2 random = samplerGet2D(rng);
-        vec3 local_dir = concentricHemisphere(random);
-        vec3 ws_dir = normalize(localToWorld(local_dir, info.tangentFrame));
-        vec2 octUV = invOctSphereMap(ws_dir);
+    res += getProbeRadiance(octUV, probe_min + vec3(0.0, 0.0f, 0.0f));
+    res += getProbeRadiance(octUV, probe_min + vec3(1.0, 0.0f, 0.0f));
+    res += getProbeRadiance(octUV, probe_min + vec3(0.0, 1.0f, 0.0f));
+    res += getProbeRadiance(octUV, probe_min + vec3(1.0, 1.0f, 0.0f));
 
-        res += texture(sampler2D(probe[0], repeatSampler), octUV).rgb * local_dir.z * info.material.rho * 1.0 / M_PI;
-    }
+    res += getProbeRadiance(octUV, probe_min + vec3(0.0, 0.0f, 1.0f));
+    res += getProbeRadiance(octUV, probe_min + vec3(1.0, 0.0f, 1.0f));
+    res += getProbeRadiance(octUV, probe_min + vec3(0.0, 1.0f, 1.0f));
+    res += getProbeRadiance(octUV, probe_min + vec3(1.0, 1.0f, 1.0f));
 
-    return res;
-    #endif
+    return res * 0.125;
 }
 
 // Entry point

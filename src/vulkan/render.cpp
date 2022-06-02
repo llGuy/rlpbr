@@ -13,9 +13,9 @@ using namespace std;
 namespace RLpbr {
 namespace vk {
 
-static constexpr uint32_t PROBE_WIDTH = 1000;
-static constexpr uint32_t PROBE_HEIGHT = 1000;
-static constexpr glm::ivec3 PROBE_DIM = glm::ivec3(3, 3, 3);
+static constexpr uint32_t PROBE_WIDTH = 32;
+static constexpr uint32_t PROBE_HEIGHT = 32;
+static constexpr glm::ivec3 PROBE_DIM = glm::ivec3(5, 5, 5);
 static constexpr uint32_t PROBE_COUNT = PROBE_DIM.x * PROBE_DIM.y * PROBE_DIM.z;
 
 static InitConfig getInitConfig(const RenderConfig &cfg, bool validate)
@@ -1591,8 +1591,13 @@ void VulkanBackend::render(RenderBatch &batch)
         dev.dt.cmdBindPipeline(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
                                pipelines_.rt.hdl);
 
-        RTPushConstant push_const {
+        RTPushConstant push_const = {
             frame_counter_,
+            PROBE_DIM.x,
+            PROBE_DIM.y,
+            PROBE_DIM.z,
+            glm::vec4(envs->getScene()->envInit.defaultBBox.pMin, 0.0f),
+            glm::vec4(envs->getScene()->envInit.defaultBBox.pMax, 0.0f),
         };
 
         dev.dt.cmdPushConstants(render_cmd, pipelines_.rt.layout,
@@ -2496,7 +2501,7 @@ Probe *VulkanBackend::bakeProbe(glm::vec3 position, RenderBatch &batch)
         frame_counter_ += cfg_.batchSize;
     }
 
-    if (/*cfg_.denoise*/ true) {
+    if (/*cfg_.denoise*/ false) {
         submitCmd();
         waitForFenceInfinitely(dev, batch_state.fence);
         resetFence(dev, batch_state.fence);
