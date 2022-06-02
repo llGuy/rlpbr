@@ -345,7 +345,8 @@ struct ShadeResult {
 ShadeResult shade(inout Sampler rng, in Material material,
                   in LightSample light_sample,
                   in vec3 outgoing,
-                  in TangentFrame frame)
+                  in TangentFrame frame,
+                  in bool hit_rough)
 {
     // These normalizations shouldn't be necessary, but z component
     // needs to be accurate for cos angle
@@ -366,6 +367,13 @@ ShadeResult shade(inout Sampler rng, in Material material,
 
     vec3 nee = light_sample.pdf == 0.f ? vec3(0.f) :
         bsdf_response * light_sample.radiance * mis_weight / light_sample.pdf;
+
+    if (hit_rough) {
+        bsdf.microfacetProb = 0.f;
+        bsdf.microfacetMSProb = 0.f;
+        bsdf.transmissionProb = 0.f;
+        bsdf.diffuseProb = 0.f;
+    }
 
     // Compute bounce
     SampleResult bounce = sampleBSDF(rng, bsdf, wo);
@@ -424,7 +432,7 @@ PathVertexState processPathVertex(inout Sampler rng, in Environment env,
                                   in HitInfo hit, in vec3 ray_dir,
                                   in vec3 ray_origin, in float bounce_pdf,
                                   in uint32_t bounce_flags,
-                                  in bool use_nee)
+                                  in bool use_nee, inout bool hit_rough)
 {
     PathVertexState result;
     result.radiance = handleEmittance(env, hit, bounce_pdf, ray_origin,
@@ -444,7 +452,7 @@ PathVertexState processPathVertex(inout Sampler rng, in Environment env,
         hit.position, hit.geoNormal, hit.tangentFrame.normal);
     
     ShadeResult shade_result = shade(rng, hit.material,
-        light_info.lightSample, -ray_dir, hit.tangentFrame);
+        light_info.lightSample, -ray_dir, hit.tangentFrame, hit_rough);
     
     vec3 nee_radiance = shade_result.color;
 
@@ -478,6 +486,9 @@ PathVertexState processPathVertex(inout Sampler rng, in Environment env,
         result.bounceFlags = shade_result.flags;
     }
 
+    if ((result.bounceFlags & BSDFFlagsDiffuse) != 0) {
+        hit_rough = true;
+    }
 
     return result;
 }
@@ -643,6 +654,8 @@ vec3 indirectLighting(in Environment env, in vec3 ray_origin, in vec3 ray_dir,
 {
     vec3 indirect_contrib = vec3(0.f);
     vec3 path_weight = vec3(1.f);
+
+    bool hit_rough = false;
 
     for (int32_t path_depth = 1;
 #ifdef USE_MIS
