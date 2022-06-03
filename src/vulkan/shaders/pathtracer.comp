@@ -440,7 +440,7 @@ PathVertexState processPathVertex(inout Sampler rng, in Environment env,
         return result;
     }
 
-    LightInfo light_info = sampleLights(rng, env,
+    LightInfo light_info = hackySampleLights(rng, env,
         hit.position, hit.geoNormal, hit.tangentFrame.normal);
     
     ShadeResult shade_result = shade(rng, hit.material,
@@ -486,6 +486,7 @@ vec3 envMapMiss(uint32_t map_idx, vec3 ray_dir, float bounce_pdf,
                 uint32_t bounce_flags, uint32_t num_lights,
                 bool mis_only)
 {
+    return vec3(0.0);
     vec3 radiance = evalEnvMap(map_idx, ray_dir);
 
     if (bool(bounce_flags & BSDFFlagsDelta)) {
@@ -568,7 +569,7 @@ PrimaryResult directLighting(in u32vec3 idx, in uint32_t linear_idx,
 
     result.vertState.radiance = hit.material.emittance;
 
-    LightInfo light_info = sampleLights(rng, env,
+    LightInfo light_info = hackySampleLights(rng, env,
         hit.position, hit.geoNormal, hit.tangentFrame.normal);
     
     vec3 wi = normalize(worldToLocalIncoming(light_info.lightSample.toLight,

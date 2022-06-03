@@ -18,6 +18,7 @@ target_link_libraries(rlpbr
         rlpbr_core
         rlpbr_vulkan
         rlpbr_vulkan_headless
+        stdc++fs
     INTERFACE
         CUDA::cudart
         glm

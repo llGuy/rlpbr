@@ -7,6 +7,7 @@
 #include <sstream>
 #include <glm/gtx/string_cast.hpp>
 #include <cmath>
+#include <filesystem>
 
 int probeIdx = 0;
 
@@ -15,8 +16,8 @@ using namespace std;
 namespace RLpbr {
 namespace vk {
 
-static constexpr uint32_t PROBE_WIDTH = 128;
-static constexpr uint32_t PROBE_HEIGHT = 128;
+static constexpr uint32_t PROBE_WIDTH = 32;
+static constexpr uint32_t PROBE_HEIGHT = 32;
 static constexpr glm::ivec3 PROBE_DIM = glm::ivec3(1);
 static constexpr uint32_t PROBE_COUNT = PROBE_DIM.x * PROBE_DIM.y * PROBE_DIM.z;
 
@@ -2608,6 +2609,13 @@ Probe *VulkanBackend::bakeProbe(glm::vec3 position, RenderBatch &batch)
 
 void VulkanBackend::bake(RenderBatch &batch)
 {
+    if (std::filesystem::exists("probes.bin")) {
+        std::cout << "Can just load probes!" << std::endl;
+    }
+    else {
+        std::cout << "Need to generate the probes!" << std::endl;
+    }
+
     std::cout << "Making probes" << std::endl;
 
     probe_width_ = PROBE_WIDTH;
