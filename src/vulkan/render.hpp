@@ -180,6 +180,8 @@ struct Probe {
     LocalTexture tx;
     VkImageView view;
     VkDeviceMemory backing;
+
+    VkDeviceSize size;
 };
 
 struct ProbeGenState {
@@ -235,6 +237,9 @@ public:
     // Make descriptor set with all probes
     void makeProbeDescriptorSet();
     void makeProbeTextureData(Probe *probe, VkCommandBuffer &cmd);
+
+    void serializeProbeToFile(std::ofstream &file, int idx);
+    Probe *deserializeProbeFromFile(std::ifstream &file);
 
 private:
     VulkanBackend(const RenderConfig &cfg,

@@ -16,10 +16,10 @@ using namespace std;
 namespace RLpbr {
 namespace vk {
 
-static constexpr uint32_t PROBE_WIDTH = 32;
-static constexpr uint32_t PROBE_HEIGHT = 32;
-static constexpr glm::ivec3 PROBE_DIM = glm::ivec3(1);
-static constexpr uint32_t PROBE_COUNT = PROBE_DIM.x * PROBE_DIM.y * PROBE_DIM.z;
+static uint32_t PROBE_WIDTH = 32;
+static uint32_t PROBE_HEIGHT = 32;
+static glm::ivec3 PROBE_DIM = glm::ivec3(3);
+static uint32_t PROBE_COUNT = PROBE_DIM.x * PROBE_DIM.y * PROBE_DIM.z;
 
 static InitConfig getInitConfig(const RenderConfig &cfg, bool validate)
 {
@@ -2520,7 +2520,7 @@ Probe *VulkanBackend::bakeProbe(glm::vec3 position, RenderBatch &batch)
         startRenderSetup();
     }
 
-    #if 0
+#if 0
     if (cfg_.tonemap) {
         // comp barrier and stages here are worst case
         // assuming we're denoising
@@ -2562,9 +2562,11 @@ Probe *VulkanBackend::bakeProbe(glm::vec3 position, RenderBatch &batch)
             launch_size_.y,
             launch_size_.z);
     }
-    #endif
+#endif
 
+    std::cout << "Submitting..." << std::endl;
     submitCmd();
+    std::cout << "Executed" << std::endl;
 
     dev.dt.deviceWaitIdle(dev.hdl);
 
@@ -2594,6 +2596,8 @@ Probe *VulkanBackend::bakeProbe(glm::vec3 position, RenderBatch &batch)
 
         compute_queues_[0].submit(dev, 1, &render_submit, fence);
 
+        // dev.dt.deviceWaitIdle();
+
         waitForFenceInfinitely(dev, fence);
 
         dev.dt.destroyFence(dev.hdl, fence, nullptr);
@@ -2607,60 +2611,344 @@ Probe *VulkanBackend::bakeProbe(glm::vec3 position, RenderBatch &batch)
     // cur_queue_ = (cur_queue_ + 1) & 1;
 }
 
+static const char *PROBES_BIN_PATH = "probes.bin";
+
 void VulkanBackend::bake(RenderBatch &batch)
 {
-    if (std::filesystem::exists("probes.bin")) {
-        std::cout << "Can just load probes!" << std::endl;
-    }
-    else {
-        std::cout << "Need to generate the probes!" << std::endl;
-    }
-
-    std::cout << "Making probes" << std::endl;
-
     probe_width_ = PROBE_WIDTH;
     probe_height_ = PROBE_HEIGHT;
 
-    // Allocate resources to render a probe
-    probe_gen_ = new ProbeGenState(makeProbeGenState());
+    uint32_t probe_count = PROBE_DIM.x * PROBE_DIM.y * PROBE_DIM.z;
 
-    VulkanBatch &batch_backend = *getVkBatch(batch);
 
-    Environment *envs = batch.getEnvironments();
-    glm::vec3 min = envs->getScene()->envInit.defaultBBox.pMin;
-    glm::vec3 max = envs->getScene()->envInit.defaultBBox.pMax;
-    glm::vec3 center = (min + max) * 0.5f;
+    if (std::filesystem::exists(PROBES_BIN_PATH)) {
+        std::cout << "Can just load probes!" << std::endl;
 
-    std::cout << "min : " << glm::to_string(min) << std::endl;
-    std::cout << "max : " << glm::to_string(max) << std::endl;
+        ifstream file(PROBES_BIN_PATH);
 
-    float right = (max.x - min.x) / (float)(PROBE_DIM.x - 1);
-    float up = (max.y - min.y) / (float)(PROBE_DIM.y - 1);
-    float forward = (max.z - min.z) / (float)(PROBE_DIM.z - 1);
+        glm::ivec3 dim;
+        file.read((char *)&dim, sizeof(dim));
 
-    std::vector<glm::vec3> positions = {center};
+        probe_count = dim.x * dim.y * dim.z;
 
-    #if 0
+        assert(dim.x == PROBE_DIM.x && dim.y == PROBE_DIM.y && dim.z == PROBE_DIM.z);
 
-    for (int z = 0; z < PROBE_DIM.z; ++z) {
-        for (int y = 0; y < PROBE_DIM.y; ++y) {
-            for (int x = 0; x < PROBE_DIM.x; ++x) {
-                glm::vec3 pos = glm::vec3(right * x, up * y, forward * z) + min;
-                positions.push_back(pos);
-            }
+        while (!file.eof()) {
+            probes_.push_back(deserializeProbeFromFile(file));
         }
     }
-    #endif
 
-    std::cout << "Baking" << std::endl;
-    for (int i = 0; i < positions.size(); ++i) {
-        probes_.push_back(bakeProbe(positions[i], batch));
-        std::cout << "Finished " << (i+1) << " / " << positions.size() << " probes (at " << glm::to_string(positions[i]) << ")" << std::endl;
-    }
-    std::cout << "Finished baking" << std::endl;
+        std::cout << "Need to generate the probes!" << std::endl;
+
+        // Allocate resources to render a probe
+        probe_gen_ = new ProbeGenState(makeProbeGenState());
+
+        VulkanBatch &batch_backend = *getVkBatch(batch);
+
+        Environment *envs = batch.getEnvironments();
+        glm::vec3 min = envs->getScene()->envInit.defaultBBox.pMin;
+        glm::vec3 max = envs->getScene()->envInit.defaultBBox.pMax;
+        glm::vec3 center = (min + max) * 0.5f;
+
+        std::cout << "min : " << glm::to_string(min) << std::endl;
+        std::cout << "max : " << glm::to_string(max) << std::endl;
+
+        float right = (max.x - min.x) / (float)(PROBE_DIM.x - 1);
+        float up = (max.y - min.y) / (float)(PROBE_DIM.y - 1);
+        float forward = (max.z - min.z) / (float)(PROBE_DIM.z - 1);
+
+        std::vector<glm::vec3> positions;
+
+        uint32_t left = probe_count - probes_.size();
+        std::cout << "left = " << left << std::endl;
+
+#if 1
+        uint32_t start = probes_.size();
+        for (int i = 0; i < left; ++i) {
+            int idx = start + i;
+
+            int x = idx % PROBE_DIM.x;
+            int y = (idx/PROBE_DIM.x) % PROBE_DIM.y;
+            int z = (idx/(PROBE_DIM.x * PROBE_DIM.y)) % PROBE_DIM.z;
+
+            glm::vec3 pos = glm::vec3(right * x, up * y, forward * z) + min;
+            positions.push_back(pos);
+        }
+
+#if 0
+        for (int z = 0; z < PROBE_DIM.z; ++z) {
+            for (int y = 0; y < PROBE_DIM.y; ++y) {
+                for (int x = 0; x < PROBE_DIM.x; ++x) {
+                    glm::vec3 pos = glm::vec3(right * x, up * y, forward * z) + min;
+                    positions.push_back(pos);
+                }
+            }
+        }
+#endif
+#endif
+
+        // Save these to a file
+
+        /*
+         * 4-bytes dimx, 4-bytes dimy, 4-bytes dimz,
+         * 4-bytes probe size, probe bytes
+         * 4-bytes probe size, probe bytes
+         * 4-bytes probe size, probe bytes
+         * 4-bytes probe size, probe bytes
+         * ...
+         */
+        ofstream file(PROBES_BIN_PATH, std::ios::app);
+        file.write((const char *)&PROBE_DIM, sizeof(PROBE_DIM));
+
+
+        std::cout << "Baking" << std::endl;
+        for (int i = 0; i < positions.size(); ++i) {
+            probes_.push_back(bakeProbe(positions[i], batch));
+            std::cout << "Finished " << (start+i+1) << " / " << positions.size() << " probes (at " << glm::to_string(positions[i]) << ")" << std::endl;
+
+            serializeProbeToFile(file, i);
+            file.flush();
+        }
+        std::cout << "Finished baking : " << probes_.size() << std::endl;
 
     // Making descriptor sets
     makeProbeDescriptorSet();
+}
+
+Probe *VulkanBackend::deserializeProbeFromFile(std::ifstream &file) {
+    // First create buffer
+    VkDeviceSize size;
+    file.read((char *)&size, sizeof(size));
+
+    HostBuffer staging = alloc.makeStagingBuffer(size);
+    file.read((char *)staging.ptr, size);
+
+
+
+
+    VkCommandPool cmd_pool = makeCmdPool(dev, dev.computeQF);
+    VkCommandBuffer cmd = makeCmdBuffer(dev, cmd_pool);
+
+    VkCommandBufferBeginInfo begin_info {};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    REQ_VK(dev.dt.beginCommandBuffer(cmd, &begin_info));
+
+    Probe *probe = new Probe();
+
+
+
+    int width = probe_width_, height = probe_height_;
+    size_t byte_size = 4 * sizeof(uint32_t) * width * height;
+
+    Probe &pr = *probe;
+
+    // Make the texture object
+    VkFormat format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    auto [tx, req] = alloc.makeTexture2D(width, height, 1, format);
+
+    optional<VkDeviceMemory> backing_opt = alloc.alloc(req.size);
+
+    pr.size = req.size;
+
+    if (!backing_opt.has_value()) {
+        cerr << "Not enough memory for probe texture" << endl;
+        fatalExit();
+    }
+
+    VkDeviceMemory backing = backing_opt.value();
+
+    // Bind the backing to the image object
+    dev.dt.bindImageMemory(dev.hdl, tx.image, backing, 0);
+
+    VkImageViewCreateInfo view_info;
+    view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view_info.pNext = nullptr;
+    view_info.flags = 0;
+    view_info.image = tx.image;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format = format;
+    view_info.components = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
+    view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+    VkImageView view;
+    REQ_VK(dev.dt.createImageView(dev.hdl, &view_info, nullptr, &view));
+
+    { // Prepare image for transfer
+        VkImageMemoryBarrier barrier = {
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            nullptr,
+            0,
+            VK_ACCESS_TRANSFER_WRITE_BIT,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_QUEUE_FAMILY_IGNORED,
+            VK_QUEUE_FAMILY_IGNORED,
+            tx.image,
+            { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+        };
+
+        dev.dt.cmdPipelineBarrier(
+            cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &barrier);
+    }
+
+    { // Do buffer to image copy
+        VkBufferImageCopy copy_info = {};
+        copy_info.bufferOffset = 0;
+        copy_info.imageSubresource.aspectMask =
+            VK_IMAGE_ASPECT_COLOR_BIT;
+        copy_info.imageSubresource.mipLevel = 0;
+        copy_info.imageSubresource.baseArrayLayer = 0;
+        copy_info.imageSubresource.layerCount = 1;
+        copy_info.imageExtent.width = width;
+        copy_info.imageExtent.height = height;
+        copy_info.imageExtent.depth = 1;
+
+        dev.dt.cmdCopyBufferToImage(
+            cmd, staging.buffer, tx.image,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_info);
+    }
+
+    { // Prepare image for shader reading
+        VkImageMemoryBarrier barrier = {
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            nullptr,
+            VK_ACCESS_TRANSFER_WRITE_BIT,
+            VK_ACCESS_SHADER_READ_BIT,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_QUEUE_FAMILY_IGNORED,
+            VK_QUEUE_FAMILY_IGNORED,
+            tx.image,
+            { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+        };
+
+        dev.dt.cmdPipelineBarrier(
+            cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &barrier);
+    }
+
+    pr.tx = tx;
+    pr.view = view;
+    pr.backing = backing;
+
+
+    REQ_VK(dev.dt.endCommandBuffer(cmd));
+
+    { // Submit command buffer
+        VkSubmitInfo render_submit {};
+        render_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        render_submit.waitSemaphoreCount = 0;
+        render_submit.pWaitSemaphores = nullptr;
+        render_submit.pWaitDstStageMask = nullptr;
+        render_submit.commandBufferCount = 1;
+        render_submit.pCommandBuffers = &cmd;
+
+        VkFence fence = makeFence(dev);
+
+        compute_queues_[0].submit(dev, 1, &render_submit, fence);
+
+        waitForFenceInfinitely(dev, fence);
+
+        dev.dt.destroyFence(dev.hdl, fence, nullptr);
+        dev.dt.destroyCommandPool(dev.hdl, cmd_pool, nullptr);
+    }
+
+    return probe;
+}
+
+void VulkanBackend::serializeProbeToFile(std::ofstream &file, int idx) {
+    Probe &pr = *probes_[idx];
+
+    VkCommandPool cmdpool = makeCmdPool(dev, dev.computeQF);
+    VkCommandBuffer cmd = makeCmdBuffer(dev, cmdpool);
+
+    VkCommandBufferBeginInfo begin_info {};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    REQ_VK(dev.dt.beginCommandBuffer(cmd, &begin_info));
+
+
+    { // Prepare image for transfer
+        VkImageMemoryBarrier barrier = {
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            nullptr,
+            0,
+            VK_ACCESS_TRANSFER_READ_BIT,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_QUEUE_FAMILY_IGNORED,
+            VK_QUEUE_FAMILY_IGNORED,
+            pr.tx.image,
+            { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+        };
+
+        dev.dt.cmdPipelineBarrier(
+            cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &barrier);
+    }
+
+    HostBuffer staging = alloc.makeStagingBuffer(pr.size);
+
+    { // Do buffer to image copy
+        VkBufferImageCopy copy_info = {};
+        copy_info.bufferOffset = 0;
+        copy_info.imageSubresource.aspectMask =
+            VK_IMAGE_ASPECT_COLOR_BIT;
+        copy_info.imageSubresource.mipLevel = 0;
+        copy_info.imageSubresource.baseArrayLayer = 0;
+        copy_info.imageSubresource.layerCount = 1;
+        copy_info.imageExtent.width = PROBE_WIDTH;
+        copy_info.imageExtent.height = PROBE_HEIGHT;
+        copy_info.imageExtent.depth = 1;
+
+        dev.dt.cmdCopyImageToBuffer(
+            cmd, pr.tx.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging.buffer,
+            1, &copy_info);
+    }
+
+    { // Prepare image for shader reading
+        VkImageMemoryBarrier barrier = {
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            nullptr,
+            VK_ACCESS_TRANSFER_READ_BIT,
+            VK_ACCESS_SHADER_READ_BIT,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_QUEUE_FAMILY_IGNORED,
+            VK_QUEUE_FAMILY_IGNORED,
+            pr.tx.image,
+            { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+        };
+
+        dev.dt.cmdPipelineBarrier(
+            cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &barrier);
+    }
+
+    REQ_VK(dev.dt.endCommandBuffer(cmd));
+
+    { // Submit command buffer
+        VkSubmitInfo render_submit {};
+        render_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        render_submit.waitSemaphoreCount = 0;
+        render_submit.pWaitSemaphores = nullptr;
+        render_submit.pWaitDstStageMask = nullptr;
+        render_submit.commandBufferCount = 1;
+        render_submit.pCommandBuffers = &cmd;
+
+        VkFence fence = makeFence(dev);
+
+        compute_queues_[0].submit(dev, 1, &render_submit, fence);
+
+        waitForFenceInfinitely(dev, fence);
+
+        dev.dt.destroyFence(dev.hdl, fence, nullptr);
+        dev.dt.destroyCommandPool(dev.hdl, cmdpool, nullptr);
+    }
+
+    // Now serialize those bytes
+    file.write((const char *)&pr.size, sizeof(pr.size));
+    file.write((const char *)staging.ptr, pr.size);
 }
 
 void VulkanBackend::makeProbeTextureData(Probe *probe, VkCommandBuffer &cmd)
@@ -2675,6 +2963,8 @@ void VulkanBackend::makeProbeTextureData(Probe *probe, VkCommandBuffer &cmd)
     auto [tx, req] = alloc.makeTexture2D(width, height, 1, format);
 
     optional<VkDeviceMemory> backing_opt = alloc.alloc(req.size);
+
+    pr.size = req.size;
 
     if (!backing_opt.has_value()) {
         cerr << "Not enough memory for probe texture" << endl;

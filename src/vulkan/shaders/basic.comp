@@ -409,14 +409,14 @@ void main()
     uint32_t linear_idx = batch_idx * RES_Y * RES_X + idx.y * RES_X + idx.x;
     uint32_t base_out_offset = 4 * linear_idx;
 
-#if 0
+#if 1
     vec2 coordsGL = vec2(float(idx.x) / float(RES_X), float(idx.y) / float(RES_Y));
     vec3 col = texture(sampler2D(probe[push_const.probeIdx], repeatSampler), coordsGL).rgb;
 
     setOutput(base_out_offset, col, 0);
 #endif
 
-#if 1
+#if 0
 
 #ifdef AUXILIARY_OUTPUTS
     uint32_t base_aux_offset = 3 * linear_idx;
