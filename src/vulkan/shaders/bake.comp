@@ -285,6 +285,14 @@ void setOutput(uint32_t base_offset, vec3 rgb, uint32_t instance_id)
         uintBitsToFloat(instance_id);
 }
 
+vec3 getOutput(uint32_t base_offset)
+{
+    return vec3(
+        outputBuffer[nonuniformEXT(base_offset)],
+        outputBuffer[nonuniformEXT(base_offset + 1)],
+        outputBuffer[nonuniformEXT(base_offset + 2)]);
+}
+
 #ifdef AUXILIARY_OUTPUTS
 void setAuxiliaries(uint32_t base_offset, vec3 albedo, vec3 normal)
 {
@@ -856,9 +864,10 @@ void main()
     diff.dDdY = vec3(0.0);
 
 
-    vec3 indirect = vec3(0.0);
+    vec3 indirect = getOutput(base_out_offset);
     float div = 1.0 / float(SPP);
-    for (int32_t sample_idx = 0; sample_idx < SPP; sample_idx++) {
+    for (int32_t i = 0; i < 64; i++) {
+        int32_t sample_idx = i + int(push_const.probeIdx);
         Sampler rng = makeSampler(idx.x, idx.y, sample_idx, batch_idx + push_const.baseFrameCounter);
 
         vec2 random = samplerGet2D(rng);

@@ -1596,12 +1596,12 @@ void VulkanBackend::render(RenderBatch &batch)
 
         RTPushConstant push_const = {
             frame_counter_,
-            PROBE_DIM.x,
-            PROBE_DIM.y,
-            PROBE_DIM.z,
+            (uint32_t)PROBE_DIM.x,
+            (uint32_t)PROBE_DIM.y,
+            (uint32_t)PROBE_DIM.z,
             glm::vec4(envs->getScene()->envInit.defaultBBox.pMin, 0.0f),
             glm::vec4(envs->getScene()->envInit.defaultBBox.pMax, 0.0f),
-            probeIdx,
+            (uint32_t)probeIdx,
         };
 
         dev.dt.cmdPushConstants(render_cmd, pipelines_.rt.layout,
@@ -2091,16 +2091,6 @@ Probe *VulkanBackend::bakeProbe(glm::vec3 position, RenderBatch &batch)
         dev.dt.cmdBindPipeline(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
                                pipelines_.bake.hdl);
 
-        RTPushConstant push_const {
-            frame_counter_,
-        };
-
-        dev.dt.cmdPushConstants(render_cmd, pipelines_.bake.layout,
-                                VK_SHADER_STAGE_COMPUTE_BIT,
-                                0,
-                                sizeof(RTPushConstant),
-                                &push_const);
-
         dev.dt.cmdBindDescriptorSets(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
                                      pipelines_.bake.layout, 0, 1,
                                      &batch_state.rtSets[batch_backend.curBuffer],
@@ -2287,214 +2277,60 @@ Probe *VulkanBackend::bakeProbe(glm::vec3 position, RenderBatch &batch)
     comp_barrier.dstAccessMask =
         VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
 
-    if (cfg_.adaptiveSampling) {
-        dev.dt.cmdFillBuffer(render_cmd,
-            batch_backend.fb.outputs[batch_backend.fb.adaptiveIdx].buffer,
-            0, fb_cfg_.adaptiveBytes, 0);
+    VkBufferMemoryBarrier param_barrier;
+    param_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    param_barrier.pNext = nullptr;
+    param_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    param_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    param_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    param_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    param_barrier.buffer = batch_backend.renderInputDev.buffer;
+    param_barrier.offset = 0;
+    param_barrier.size = param_cfg_.totalParamBytes;
 
-        dev.dt.cmdFillBuffer(render_cmd,
-            batch_backend.fb.outputs[batch_backend.fb.hdrIdx].buffer,
-            0, fb_cfg_.hdrBytes, 0);
+    dev.dt.cmdPipelineBarrier(render_cmd,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT,
+                              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                              0,
+                              0, nullptr,
+                              1, &param_barrier,
+                              0, nullptr);
 
-        if (cfg_.tonemap) {
-            dev.dt.cmdFillBuffer(render_cmd,
-                batch_backend.fb.outputs[batch_backend.fb.illuminanceIdx].buffer,
-                0, fb_cfg_.illuminanceBytes, 0);
-        }
+    VkMemoryBarrier zero_barrier;
+    zero_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    zero_barrier.pNext = nullptr;
+    zero_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    zero_barrier.dstAccessMask =
+        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
 
-        if (cfg_.auxiliaryOutputs) {
-            dev.dt.cmdFillBuffer(render_cmd,
-                batch_backend.fb.outputs[batch_backend.fb.normalIdx].buffer,
-                0, fb_cfg_.normalBytes, 0);
+    dev.dt.cmdFillBuffer(render_cmd,
+        batch_backend.fb.outputs[batch_backend.fb.outputIdx].buffer,
+        0, probe_width_ * probe_height_ * 4 * sizeof(half), 0);
 
-            dev.dt.cmdFillBuffer(render_cmd,
-                batch_backend.fb.outputs[batch_backend.fb.albedoIdx].buffer,
-                0, fb_cfg_.albedoBytes, 0);
-        }
+    dev.dt.cmdFillBuffer(render_cmd,
+        batch_backend.fb.outputs[batch_backend.fb.hdrIdx].buffer,
+        0, probe_width_ * probe_height_ * 4 * sizeof(float), 0);
 
-        VkMemoryBarrier zero_barrier;
-        zero_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-        zero_barrier.pNext = nullptr;
-        zero_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        zero_barrier.dstAccessMask =
-            VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    dev.dt.cmdPipelineBarrier(render_cmd,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT,
+                              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                              0,
+                              1, &zero_barrier, 0, nullptr, 0, nullptr);
 
-        dev.dt.cmdPipelineBarrier(render_cmd,
-                                  VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                  0,
-                                  1, &zero_barrier, 0, nullptr, 0, nullptr);
+    RTPushConstant push_const {
+        frame_counter_,
+    };
 
-        int cur_tile_idx = 0;
+    for (int i = 0; i < (int)cfg_.spp; i += 64) {
+        push_const.probeIdx = i * 64;
 
-        auto writeTile = [&cur_tile_idx, &batch_state](int batch_idx,
-                                                       int tile_x,
-                                                       int tile_y,
-                                                       int sample_offset) {
-            InputTile &cur_tile =
-                batch_state.tileInputPtr[cur_tile_idx];
-            cur_tile.batchIdx = batch_idx;
-            cur_tile.xOffset = tile_x;
-            cur_tile.yOffset = tile_y;
-            cur_tile.sampleOffset = sample_offset;
+        dev.dt.cmdPushConstants(render_cmd, pipelines_.bake.layout,
+                                VK_SHADER_STAGE_COMPUTE_BIT,
+                                0,
+                                sizeof(RTPushConstant),
+                                &push_const);
 
-            cur_tile_idx++;
-        };
 
-        for (int batch_idx = 0; batch_idx < (int)cfg_.batchSize; batch_idx++) {
-            for (int tile_y = 0; tile_y < (int)fb_cfg_.numTilesTall; tile_y++) {
-                for (int tile_x = 0; tile_x < (int)fb_cfg_.numTilesWide;
-                     tile_x++) {
-                    for (int sample_idx = 0; sample_idx < (int)cfg_.spp;
-                         sample_idx +=
-                            VulkanConfig::adaptive_samples_per_thread) {
-                        writeTile(batch_idx, tile_x, tile_y, sample_idx);
-                    }
-                }
-            }
-        }
-
-        batch_backend.adaptiveInput->flush(dev);
-
-        int num_tiles = cur_tile_idx;
-
-        // FIXME: xy -> yz, z -> x (larger launch limit in X)
-        dev.dt.cmdDispatch(render_cmd, num_tiles, 1, 1);
-
-        auto adaptiveReadback = [&]() {
-            VkMemoryBarrier readback_barrier;
-            readback_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-            readback_barrier.pNext = nullptr;
-            readback_barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-            readback_barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-
-            dev.dt.cmdPipelineBarrier(
-                render_cmd,
-                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                VK_PIPELINE_STAGE_TRANSFER_BIT,
-                0,
-                1, &readback_barrier, 0, nullptr, 0, nullptr);
-
-            VkBufferCopy copy_info;
-            copy_info.srcOffset = 0;
-            copy_info.dstOffset = 0;
-            copy_info.size = fb_cfg_.adaptiveBytes;
-
-            dev.dt.cmdCopyBuffer(render_cmd,
-                batch_backend.fb.outputs[batch_backend.fb.adaptiveIdx].buffer,
-                batch_backend.fb.adaptiveReadback->buffer,
-                1, &copy_info);
-
-            VkBufferCopy exposure_copy_info;
-            exposure_copy_info.srcOffset = 0;
-            exposure_copy_info.dstOffset = 0;
-            exposure_copy_info.size = fb_cfg_.illuminanceBytes;
-
-            dev.dt.cmdCopyBuffer(render_cmd,
-                batch_backend.fb.outputs[batch_backend.fb.illuminanceIdx].buffer,
-                batch_backend.fb.exposureReadback->buffer,
-                1, &exposure_copy_info);
-        };
-
-        adaptiveReadback();
-
-        submitCmd();
-        waitForFenceInfinitely(dev, batch_state.fence);
-        resetFence(dev, batch_state.fence);
-
-        constexpr float norm_variance_threshold = 5e-4;
-        constexpr int max_adaptive_iters = 10000;
-
-        auto processAdaptiveTile = [&](int batch_idx, int tile_x, int tile_y) {
-            uint32_t linear_idx =
-                batch_idx * fb_cfg_.numTilesTall * fb_cfg_.numTilesWide +
-                    tile_y * fb_cfg_.numTilesWide + tile_x;
-            AdaptiveTile &tile = batch_state.adaptiveReadbackPtr[linear_idx];
-            float &tile_illuminance =
-                ((float *)batch_backend.fb.exposureReadback->ptr)[linear_idx];
-
-            float variance = tile.tileVarianceM2 / tile.numSamples;
-
-            float norm_variance = tile_illuminance == 0.f ? 0.f :
-                tile.tileMean / tile_illuminance;
-
-            return;
-
-            if ((norm_variance == 0.f && tile.numSamples < cfg_.spp * 10) ||
-                norm_variance > norm_variance_threshold) {
-
-                for (int sample_idx = 0; sample_idx < (int)cfg_.spp;
-                     sample_idx +=
-                        VulkanConfig::adaptive_samples_per_thread) {
-                    writeTile(batch_idx, tile_x, tile_y, sample_idx);
-                }
-            }
-        };
-
-        for (int adaptive_iter = 0; adaptive_iter < max_adaptive_iters;
-             adaptive_iter++) {
-            cur_tile_idx = 0;
-            frame_counter_ += cfg_.batchSize;
-
-            for (int batch_idx = 0; batch_idx < (int)cfg_.batchSize;
-                 batch_idx++) {
-                for (int tile_y = 0; tile_y < (int)fb_cfg_.numTilesTall;
-                     tile_y++) {
-                    for (int tile_x = 0; tile_x < (int)fb_cfg_.numTilesWide;
-                         tile_x++) {
-                        processAdaptiveTile(batch_idx, tile_x, tile_y);
-                    }
-                }
-            }
-
-            num_tiles = cur_tile_idx;
-
-            if (num_tiles == 0) {
-                break;
-            }
-
-            startRenderSetup();
-
-            batch_backend.adaptiveInput->flush(dev);
-
-            // Pipeline barrier on memory reads / writes from previous iter
-            // Is this necessary given fence?
-            dev.dt.cmdPipelineBarrier(render_cmd,
-                                      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                      0,
-                                      1, &comp_barrier,
-                                      0, nullptr, 0, nullptr);
-
-            dev.dt.cmdDispatch(render_cmd, num_tiles, 1, 1);
-
-            adaptiveReadback();
-
-            submitCmd();
-            waitForFenceInfinitely(dev, batch_state.fence);
-            resetFence(dev, batch_state.fence);
-        }
-
-        startRenderSetup();
-    } else {
-        VkBufferMemoryBarrier param_barrier;
-        param_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-        param_barrier.pNext = nullptr;
-        param_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        param_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        param_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        param_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        param_barrier.buffer = batch_backend.renderInputDev.buffer;
-        param_barrier.offset = 0;
-        param_barrier.size = param_cfg_.totalParamBytes;
-
-        dev.dt.cmdPipelineBarrier(render_cmd,
-                                  VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                  0,
-                                  0, nullptr,
-                                  1, &param_barrier,
-                                  0, nullptr);
 
         dev.dt.cmdDispatch(
             render_cmd,
@@ -2502,8 +2338,16 @@ Probe *VulkanBackend::bakeProbe(glm::vec3 position, RenderBatch &batch)
             launch_size_.y,
             launch_size_.z);
 
-        frame_counter_ += cfg_.batchSize;
+        std::cout << "Submit" << std::endl;
+        submitCmd();
+        std::cout << "Executed" << std::endl;
+
+        waitForFenceInfinitely(dev, batch_state.fence);
+        resetFence(dev, batch_state.fence);
+
+        startRenderSetup();
     }
+    frame_counter_ += cfg_.batchSize;
 
     if (/*cfg_.denoise*/ false) {
         submitCmd();
@@ -2567,8 +2411,8 @@ Probe *VulkanBackend::bakeProbe(glm::vec3 position, RenderBatch &batch)
     std::cout << "Submitting..." << std::endl;
     submitCmd();
     std::cout << "Executed" << std::endl;
-
-    dev.dt.deviceWaitIdle(dev.hdl);
+    waitForFenceInfinitely(dev, batch_state.fence);
+    resetFence(dev, batch_state.fence);
 
     // Make texture data now
     VkCommandPool cmd_pool = makeCmdPool(dev, dev.computeQF);
