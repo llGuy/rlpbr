@@ -18,7 +18,7 @@ namespace vk {
 
 static uint32_t PROBE_WIDTH = 32;
 static uint32_t PROBE_HEIGHT = 32;
-static glm::ivec3 PROBE_DIM = glm::ivec3(3);
+static glm::ivec3 PROBE_DIM = glm::ivec3(5);
 static uint32_t PROBE_COUNT = PROBE_DIM.x * PROBE_DIM.y * PROBE_DIM.z;
 
 static InitConfig getInitConfig(const RenderConfig &cfg, bool validate)
@@ -2338,9 +2338,7 @@ Probe *VulkanBackend::bakeProbe(glm::vec3 position, RenderBatch &batch)
             launch_size_.y,
             launch_size_.z);
 
-        std::cout << "Submit" << std::endl;
         submitCmd();
-        std::cout << "Executed" << std::endl;
 
         waitForFenceInfinitely(dev, batch_state.fence);
         resetFence(dev, batch_state.fence);
@@ -2408,9 +2406,7 @@ Probe *VulkanBackend::bakeProbe(glm::vec3 position, RenderBatch &batch)
     }
 #endif
 
-    std::cout << "Submitting..." << std::endl;
     submitCmd();
-    std::cout << "Executed" << std::endl;
     waitForFenceInfinitely(dev, batch_state.fence);
     resetFence(dev, batch_state.fence);
 
@@ -2464,7 +2460,6 @@ void VulkanBackend::bake(RenderBatch &batch)
 
     uint32_t probe_count = PROBE_DIM.x * PROBE_DIM.y * PROBE_DIM.z;
 
-
     if (std::filesystem::exists(PROBES_BIN_PATH)) {
         std::cout << "Can just load probes!" << std::endl;
 
@@ -2481,7 +2476,7 @@ void VulkanBackend::bake(RenderBatch &batch)
             probes_.push_back(deserializeProbeFromFile(file));
         }
     }
-
+    else {
         std::cout << "Need to generate the probes!" << std::endl;
 
         // Allocate resources to render a probe
@@ -2501,12 +2496,12 @@ void VulkanBackend::bake(RenderBatch &batch)
         float up = (max.y - min.y) / (float)(PROBE_DIM.y - 1);
         float forward = (max.z - min.z) / (float)(PROBE_DIM.z - 1);
 
-        std::vector<glm::vec3> positions;
+        std::vector<glm::vec3> positions ;
 
         uint32_t left = probe_count - probes_.size();
         std::cout << "left = " << left << std::endl;
 
-#if 1
+#if 0
         uint32_t start = probes_.size();
         for (int i = 0; i < left; ++i) {
             int idx = start + i;
@@ -2518,8 +2513,9 @@ void VulkanBackend::bake(RenderBatch &batch)
             glm::vec3 pos = glm::vec3(right * x, up * y, forward * z) + min;
             positions.push_back(pos);
         }
+#endif
 
-#if 0
+#if 1
         for (int z = 0; z < PROBE_DIM.z; ++z) {
             for (int y = 0; y < PROBE_DIM.y; ++y) {
                 for (int x = 0; x < PROBE_DIM.x; ++x) {
@@ -2528,7 +2524,6 @@ void VulkanBackend::bake(RenderBatch &batch)
                 }
             }
         }
-#endif
 #endif
 
         // Save these to a file
@@ -2548,12 +2543,13 @@ void VulkanBackend::bake(RenderBatch &batch)
         std::cout << "Baking" << std::endl;
         for (int i = 0; i < positions.size(); ++i) {
             probes_.push_back(bakeProbe(positions[i], batch));
-            std::cout << "Finished " << (start+i+1) << " / " << positions.size() << " probes (at " << glm::to_string(positions[i]) << ")" << std::endl;
+            std::cout << "Finished " << (i+1) << " / " << positions.size() << " probes (at " << glm::to_string(positions[i]) << ")" << std::endl;
 
             serializeProbeToFile(file, i);
             file.flush();
         }
         std::cout << "Finished baking : " << probes_.size() << std::endl;
+    }
 
     // Making descriptor sets
     makeProbeDescriptorSet();
